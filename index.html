@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hit & Blow: Cosmic Battle v2.5.0</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root {
+            --space-black: #020205;
+            --space-navy: #000d1a;
+            --nebula-blue: #001f3f;
+            --neon-blue: #00f2ff;
+            --neon-pink: #ff00e5;
+            --active-glow: 0 0 15px #00f2ff, 0 0 5px #00f2ff inset;
+        }
+
+        body {
+            margin: 0;
+            background: 
+                radial-gradient(circle at center, var(--nebula-blue) 0%, var(--space-navy) 40%, #080410 80%, var(--space-black) 100%);
+            color: #e0f7fa;
+            font-family: 'Segoe UI', sans-serif;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        .stars {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+
+        .slot {
+            width: 38px;
+            height: 50px;
+            border: 2px solid rgba(255, 255, 255, 0.15);
+            border-radius: 6px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 1.3rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: rgba(0, 0, 0, 0.5);
+        }
+
+        .slot.active {
+            border-color: var(--neon-blue);
+            box-shadow: var(--active-glow);
+            background: rgba(0, 242, 255, 0.1);
+            color: var(--neon-blue);
+        }
+
+        .history-list {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding-right: 2px;
+            display: flex;
+            flex-direction: column; gap: 4px;
+        }
+
+        #big-announce {
+            position: fixed;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%) scale(0.5);
+            z-index: 100;
+            pointer-events: none;
+            opacity: 0;
+            text-align: center;
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        #big-announce.show {
+            opacity: 1;
+            transform: translate(-50%, -50%) scale(1.1);
+        }
+
+        .hit { color: #ffeb3b; font-weight: bold; }
+        .blow { color: var(--neon-blue); font-weight: bold; }
+
+        .btn-launch {
+            background: linear-gradient(135deg, #0072ff, #00d4ff);
+            color: black;
+            font-weight: bold;
+        }
+
+        .btn-launch:disabled {
+            opacity: 0.2;
+            filter: grayscale(1);
+        }
+
+        .btn-mini {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: 0.2s;
+        }
+
+        .btn-mini:hover:not(:disabled) {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: var(--neon-blue);
+        }
+
+        input[type="range"] {
+            accent-color: var(--neon-blue);
+            cursor: pointer;
+        }
+
+        .hidden-state { display: none !important; }
+
+        ::-webkit-scrollbar { width: 3px; }
+        ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 10px; }
+
+        .stat-box {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 6px;
+            padding: 6px;
+            text-align: center;
+        }
+
+        .custom-checkbox {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+            accent-color: var(--neon-blue);
+        }
+
+        .vol-label {
+            width: 22px;
+            text-align: right;
+            font-family: monospace;
+            font-size: 10px;
+            color: var(--neon-blue);
+        }
+
+        .turn-indicator {
+            font-size: 0.7rem;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            font-weight: bold;
+        }
+
+        .turn-active {
+            animation: pulse-glow 1.5s infinite alternate;
+        }
+
+        @keyframes pulse-glow {
+            from { text-shadow: 0 0 5px currentColor; opacity: 0.8; }
+            to { text-shadow: 0 0 20px currentColor; opacity: 1; }
+        }
+    </style>
+</head>
+<body class="flex flex-col h-screen" onclick="handleUserInteraction()">
+
+    <canvas class="stars" id="starCanvas"></canvas>
+
+    <div id="big-announce">
+        <div id="big-number" class="text-6xl font-mono tracking-widest mb-1 text-white">----</div>
+        <div id="big-result" class="text-3xl font-bold">0H 0B</div>
+        <div id="big-player" class="text-sm tracking-widest opacity-80 mt-2 uppercase">PLAYER 1</div>
+    </div>
+
+    <!-- HEADER -->
+    <header class="flex justify-between items-center p-2 px-4 glass-panel rounded-none border-t-0 border-x-0">
+        <div class="flex items-center gap-4">
+            <div id="timer-box" class="flex flex-col">
+                <span class="text-[8px] opacity-40 tracking-widest uppercase">TIME</span>
+                <span id="gameTimer" class="text-lg font-mono text-cyan-400 font-bold leading-none">♾️</span>
+            </div>
+            <div id="turn-display" class="hidden text-xs tracking-widest opacity-60">ROUND: <span id="turnCounter" class="text-cyan-400">1</span></div>
+        </div>
+        
+        <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 bg-white/5 px-2 py-1 rounded-full border border-white/10">
+                <button onclick="resetAudio()" class="text-[7px] bg-white/10 px-1.5 py-0.5 rounded border border-white/10 hover:bg-cyan-500 hover:text-black transition-colors uppercase font-bold mr-1">RESET</button>
+                <span class="text-[8px] opacity-50 uppercase">BGM</span>
+                <input type="range" id="bgmVolume" min="0" max="1" step="0.01" value="0.5" class="w-14" oninput="updateVolume('bgm', this.value)">
+                <span id="bgmLabel" class="vol-label">50</span>
+                <div class="w-[1px] h-3 bg-white/10 mx-1"></div>
+                <span class="text-[8px] opacity-50 uppercase">SE</span>
+                <input type="range" id="seVolume" min="0" max="1" step="0.01" value="0.5" class="w-14" oninput="updateVolume('se', this.value)">
+                <span id="seLabel" class="vol-label">50</span>
+            </div>
+            <button id="exitBtn" onclick="exitToSetup()" class="hidden text-[8px] border border-white/10 px-2 py-1 rounded-full hover:bg-red-900/20">EXIT</button>
+        </div>
+    </header>
+
+    <!-- SETUP SCREEN -->
+    <div id="setup-screen" class="flex-1 flex items-center justify-center p-2">
+        <div class="glass-panel p-4 max-w-xl w-full border border-cyan-500/30 shadow-2xl">
+            <h1 class="text-xl font-light tracking-widest text-center mb-4 uppercase">MISSION SETUP</h1>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-[8px] opacity-50 mb-1 uppercase tracking-widest">GAME MODE</label>
+                        <div class="flex gap-1">
+                            <button onclick="setMode('1p')" id="btn-m1p" class="flex-1 py-1 rounded bg-cyan-600 border border-white/10 text-[9px]">1P VS CPU</button>
+                            <button onclick="setMode('2p')" id="btn-m2p" class="flex-1 py-1 rounded bg-white/5 border border-white/10 text-[9px]">1P VS 2P</button>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-[8px] opacity-50 mb-1 uppercase tracking-widest">DIGITS</label>
+                        <div class="flex gap-1">
+                            <button onclick="setDigits(3)" id="btn-d3" class="flex-1 py-1 rounded bg-white/5 border border-white/10 text-xs">3</button>
+                            <button onclick="setDigits(4)" id="btn-d4" class="flex-1 py-1 rounded bg-cyan-600 border border-white/10 text-xs">4</button>
+                            <button onclick="setDigits(5)" id="btn-d5" class="flex-1 py-1 rounded bg-white/5 border border-white/10 text-xs">5</button>
+                        </div>
+                    </div>
+                    <div id="level-setting">
+                        <label class="block text-[8px] opacity-50 mb-1 uppercase tracking-widest">CPU DIFFICULTY</label>
+                        <div class="flex gap-1">
+                            <button onclick="setLevel(1)" id="btn-l1" class="flex-1 py-1 rounded bg-white/5 border border-white/10 text-[9px]">EASY</button>
+                            <button onclick="setLevel(2)" id="btn-l2" class="flex-1 py-1 rounded bg-cyan-600 border border-white/10 text-[9px]">NORMAL</button>
+                            <button onclick="setLevel(3)" id="btn-l3" class="flex-1 py-1 rounded bg-white/5 border border-white/10 text-[9px]">HARD</button>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-[8px] opacity-50 mb-1 uppercase tracking-widest">TIME LIMIT</label>
+                        <div class="flex items-center gap-2">
+                            <input type="range" id="timeLimitSlider" min="0" max="300" step="10" value="0" class="flex-1" oninput="updateTimeSetting(this.value)">
+                            <span id="timeLimitDisplay" class="text-[10px] font-mono w-8">♾️</span>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 pt-1">
+                        <div class="flex items-center gap-2">
+                            <input type="checkbox" id="showP1StatsToggle" checked class="custom-checkbox">
+                            <label for="showP1StatsToggle" class="text-[8px] opacity-60 uppercase tracking-widest cursor-pointer">1P PERCENT</label>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <input type="checkbox" id="showP2StatsToggle" checked class="custom-checkbox">
+                            <label for="showP2StatsToggle" class="text-[8px] opacity-60 uppercase tracking-widest cursor-pointer">2P PERCENT</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex flex-col justify-center">
+                    <div class="flex justify-between items-center mb-1">
+                        <label id="setup-label" class="text-[8px] opacity-50 tracking-widest uppercase">P1: SECRET CODE</label>
+                    </div>
+                    <div id="setup-slots" class="flex justify-center gap-1 mb-3"></div>
+                    <div id="setup-keypad" class="grid grid-cols-5 gap-1 mb-2"></div>
+                    <div class="grid grid-cols-3 gap-1 mb-4">
+                        <button onclick="randomizeSetup()" class="py-1.5 btn-mini rounded text-xs">🎲</button>
+                        <button onclick="backspaceSetup()" class="py-1.5 btn-mini rounded text-xs">⌫</button>
+                        <button onclick="resetSetup()" class="py-1.5 btn-mini rounded text-xs text-red-400">🗑️</button>
+                    </div>
+                    <button id="start-btn" onclick="handleStartOrNext()" disabled class="w-full py-3 bg-cyan-500 text-black font-bold rounded-lg opacity-50 cursor-not-allowed text-sm uppercase tracking-widest transition-all">Next</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- GAME SCREEN -->
+    <div id="game-screen" class="flex-1 flex flex-col p-2 overflow-hidden hidden-state">
+        <div class="flex gap-2 flex-1 overflow-hidden">
+            <!-- P1 PANEL -->
+            <div class="glass-panel p-2 flex flex-col w-1/4">
+                <h3 class="text-center text-[8px] opacity-40 mb-1 tracking-widest uppercase border-b border-white/10 pb-1">PLAYER 1</h3>
+                <div class="history-list" id="playerHistory"></div>
+                <div id="playerStatBox" class="mt-1 stat-box">
+                    <div class="text-[7px] opacity-40 uppercase tracking-widest">PATTERNS</div>
+                    <div id="playerRemaining" class="text-base font-mono text-cyan-400 leading-none">---</div>
+                    <div class="text-[7px] opacity-40 uppercase tracking-widest mt-1">PROBABILITY</div>
+                    <div id="playerProb" class="text-base font-mono text-cyan-400 leading-none">0%</div>
+                </div>
+            </div>
+
+            <!-- CENTER CONTROLS -->
+            <div class="flex flex-col w-2/4 gap-2">
+                <div class="glass-panel p-3 flex-1 flex flex-col justify-center relative">
+                    <div class="flex-1 flex flex-col justify-center max-w-xs mx-auto w-full">
+                        <div class="text-center mb-4">
+                            <p id="game-input-label" class="text-[8px] opacity-40 mb-2 tracking-widest uppercase">PLAYER 1: GUESS</p>
+                            <div class="flex justify-center gap-1.5" id="inputSlots"></div>
+                        </div>
+                        
+                        <div class="space-y-2">
+                            <div class="grid grid-cols-5 gap-1" id="gameKeypad"></div>
+                            <div class="grid grid-cols-4 gap-1">
+                                <button onclick="randomizeGuess()" class="py-2 btn-mini rounded-lg text-xs">🎲</button>
+                                <button onclick="backspaceGuess()" class="py-2 btn-mini rounded-lg text-xs">⌫</button>
+                                <button onclick="clearCurrentGuess()" class="py-2 btn-mini rounded-lg text-xs text-red-400">🗑️</button>
+                                <button id="launchBtn" onclick="playerAction()" disabled class="btn-launch rounded-lg text-[10px] tracking-widest uppercase shadow-lg shadow-cyan-500/20">Launch</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- BOTTOM INFO PANEL -->
+                <div id="bottom-info-panel" class="glass-panel p-2 flex flex-col items-center justify-center h-24 border-cyan-500/20">
+                    <div id="turn-info-container" class="text-center">
+                        <p class="text-[8px] opacity-30 tracking-widest uppercase mb-1">Current Active Link</p>
+                        <div id="turn-indicator-text" class="turn-indicator text-2xl font-mono turn-active text-cyan-400">PLAYER 1</div>
+                        <div id="p1-victory-flag" class="hidden text-[8px] text-yellow-400 mt-1 uppercase tracking-widest">P1 SUCCESS - WAITING P2</div>
+                    </div>
+                    
+                    <!-- SECRET CODE DISPLAY (VISIBLE IN 1P MODE) -->
+                    <div id="secret-code-display" class="hidden flex flex-col items-center mt-1">
+                        <p id="secret-label" class="text-[8px] opacity-30 tracking-widest uppercase mb-0.5">P1 SECRET</p>
+                        <div id="displayMySecretBig" class="text-4xl font-mono tracking-[0.5rem] text-cyan-500 font-bold leading-none">----</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- P2 PANEL -->
+            <div class="glass-panel p-2 flex flex-col w-1/4">
+                <h3 id="p2-name-label" class="text-center text-[8px] opacity-40 mb-1 tracking-widest uppercase border-b border-white/10 pb-1">CPU</h3>
+                <div class="history-list" id="cpuHistory"></div>
+                <div id="cpuStatBox" class="mt-1 stat-box">
+                    <div class="text-[7px] opacity-40 uppercase tracking-widest text-pink-300">PATTERNS</div>
+                    <div id="cpuRemaining" class="text-base font-mono text-pink-500 leading-none">---</div>
+                    <div class="text-[7px] opacity-40 uppercase tracking-widest mt-1 text-pink-300">PROBABILITY</div>
+                    <div id="cpuProb" class="text-base font-mono text-pink-500 leading-none">0%</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- OVERLAY -->
+    <div id="overlay" class="fixed inset-0 bg-black/95 flex items-center justify-center z-[200] hidden-state">
+        <div class="text-center p-8 glass-panel border-cyan-500 border-2 shadow-2xl">
+            <h2 id="result-title" class="text-3xl font-bold mb-3 tracking-tighter uppercase italic">Result</h2>
+            <p id="result-body" class="mb-6 opacity-70 text-sm"></p>
+            <button onclick="exitToSetup()" class="px-8 py-2 bg-white text-black font-bold rounded-full hover:bg-cyan-400 transition-all uppercase text-sm">Return to Base</button>
+        </div>
+    </div>
+
+    <script>
+        // --- AUDIO ENGINE ---
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const masterCompressor = audioCtx.createDynamicsCompressor();
+        masterCompressor.threshold.setValueAtTime(-10, audioCtx.currentTime);
+        masterCompressor.connect(audioCtx.destination);
+        const bgmGain = audioCtx.createGain();
+        const seGain = audioCtx.createGain();
+        bgmGain.connect(masterCompressor);
+        seGain.connect(masterCompressor);
+        let currentBgmVol = 0.5, currentSeVol = 0.5, isBGMStarted = false, bgmStep = 0;
+        bgmGain.gain.setValueAtTime(0, audioCtx.currentTime);
+        seGain.gain.setValueAtTime(0, audioCtx.currentTime);
+
+        const sfx = {
+            tap: () => playTone(1200, 'sine', 0.05, 0.08),
+            delete: () => playTone(600, 'sine', 0.1, 0.08),
+            launch: () => playTone(800, 'triangle', 0.2, 0.15),
+            scan: () => playTone(200, 'sawtooth', 0.4, 0.05),
+            win: () => { [523, 659, 783, 1046].forEach((f, i) => setTimeout(() => playTone(f, 'square', 0.3, 0.08), i * 150)); },
+            loss: () => playTone(100, 'sawtooth', 0.8, 0.15)
+        };
+
+        function playTone(freq, type, duration, vol=0.1, output=seGain) {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0, audioCtx.currentTime);
+            gain.gain.linearRampToValueAtTime(vol, audioCtx.currentTime + 0.01);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+            osc.connect(gain); gain.connect(output);
+            osc.start(); osc.stop(audioCtx.currentTime + duration);
+        }
+
+        function handleUserInteraction() {
+            if (audioCtx.state === 'suspended') audioCtx.resume().then(() => {
+                bgmGain.gain.linearRampToValueAtTime(currentBgmVol, audioCtx.currentTime + 0.5);
+                seGain.gain.linearRampToValueAtTime(currentSeVol, audioCtx.currentTime + 0.1);
+            });
+            if (!isBGMStarted) startCosmicMusic();
+        }
+
+        function startCosmicMusic() {
+            if (isBGMStarted) return;
+            isBGMStarted = true;
+            setInterval(() => {
+                if (bgmStep % 4 === 0) playTone(40, 'sine', 0.4, 0.7, bgmGain);
+                if (Math.random() < 0.1) playTone([261, 311, 349, 392][Math.floor(Math.random()*4)], 'triangle', 1.0, 0.1, bgmGain);
+                bgmStep++;
+            }, 250);
+        }
+
+        function updateVolume(type, val) {
+            const v = parseFloat(val);
+            if (type === 'bgm') { currentBgmVol = v; bgmGain.gain.setTargetAtTime(v, audioCtx.currentTime, 0.1); document.getElementById('bgmLabel').innerText = Math.round(v * 100); }
+            else { currentSeVol = v; seGain.gain.setTargetAtTime(v, audioCtx.currentTime, 0.1); document.getElementById('seLabel').innerText = Math.round(v * 100); }
+        }
+        function resetAudio() { updateVolume('bgm', 0.5); document.getElementById('bgmVolume').value = 0.5; updateVolume('se', 0.5); document.getElementById('seVolume').value = 0.5; sfx.tap(); }
+
+        // --- GAME STATE ---
+        let config = { digits: 4, level: 2, timeLimit: 0, showP1Stats: true, showP2Stats: true, mode: '1p' };
+        let setupState = { phase: 'p1', p1Secret: [], p2Secret: [] };
+        let p1Secret = [], p2Secret = [], p1History = [], p2History = [];
+        let currentGuess = [], activeIdx = 0, turn = 1, currentPlayer = 1;
+        let p1WonThisTurn = false;
+        let isProcessing = false;
+        let gameTimerInterval = null, currentTime = 0;
+        let allPerms = [], p1Knowledge = [], p2Knowledge = [];
+
+        // --- SETUP LOGIC ---
+        function setMode(m) {
+            config.mode = m;
+            document.getElementById('btn-m1p').className = `flex-1 py-1 rounded border border-white/10 text-[9px] ${m==='1p'?'bg-cyan-600':'bg-white/5'}`;
+            document.getElementById('btn-m2p').className = `flex-1 py-1 rounded border border-white/10 text-[9px] ${m==='2p'?'bg-cyan-600':'bg-white/5'}`;
+            document.getElementById('level-setting').style.display = m === '1p' ? 'block' : 'none';
+            document.getElementById('p2-name-label').innerText = m === '1p' ? 'CPU' : 'PLAYER 2';
+            resetSetup();
+        }
+
+        function setDigits(n) {
+            config.digits = n;
+            [3,4,5].forEach(v => document.getElementById(`btn-d${v}`).className = `flex-1 py-1 rounded border border-white/10 text-xs ${v===n ? 'bg-cyan-600' : 'bg-white/5'}`);
+            resetSetup();
+        }
+
+        function setLevel(n) {
+            config.level = n;
+            [1,2,3].forEach(v => document.getElementById(`btn-l${v}`).className = `flex-1 py-1 rounded border border-white/10 text-[9px] ${v===n ? 'bg-cyan-600' : 'bg-white/5'}`);
+        }
+
+        function updateTimeSetting(val) {
+            config.timeLimit = parseInt(val);
+            document.getElementById('timeLimitDisplay').innerText = val == 0 ? "♾️" : val + "s";
+        }
+
+        function resetSetup() {
+            setupState.phase = 'p1';
+            setupState.p1Secret = Array(config.digits).fill(null);
+            setupState.p2Secret = Array(config.digits).fill(null);
+            activeIdx = 0;
+            renderSetupSlots();
+            renderSetupKeypad();
+            updateSetupUI();
+        }
+
+        function updateSetupUI() {
+            const label = document.getElementById('setup-label');
+            const btn = document.getElementById('start-btn');
+            if (setupState.phase === 'p1') {
+                label.innerText = "P1: SECRET CODE";
+                btn.innerText = config.mode === '1p' ? "START MISSION" : "NEXT PLAYER";
+            } else {
+                label.innerText = "P2: SECRET CODE";
+                btn.innerText = "START MISSION";
+            }
+            checkReady();
+        }
+
+        function renderSetupSlots() {
+            const container = document.getElementById('setup-slots');
+            container.innerHTML = '';
+            const target = setupState.phase === 'p1' ? setupState.p1Secret : setupState.p2Secret;
+            target.forEach((val, i) => {
+                const div = document.createElement('div');
+                div.className = `slot ${i === activeIdx ? 'active' : ''}`;
+                div.innerText = val !== null ? val : '';
+                div.onclick = () => { sfx.delete(); target[i] = null; activeIdx = i; renderSetupSlots(); renderSetupKeypad(); checkReady(); };
+                container.appendChild(div);
+            });
+        }
+
+        function renderSetupKeypad() {
+            const container = document.getElementById('setup-keypad');
+            container.innerHTML = '';
+            const target = setupState.phase === 'p1' ? setupState.p1Secret : setupState.p2Secret;
+            for(let i=0; i<=9; i++) {
+                const btn = document.createElement('button');
+                btn.className = "py-1.5 bg-white/5 border border-white/10 rounded text-xs hover:bg-white/10 disabled:opacity-10";
+                btn.innerText = i;
+                btn.disabled = target.includes(i);
+                btn.onclick = () => { 
+                    sfx.tap(); target[activeIdx] = i; 
+                    let next = target.indexOf(null); if(next !== -1) activeIdx = next; 
+                    renderSetupSlots(); renderSetupKeypad(); checkReady(); 
+                };
+                container.appendChild(btn);
+            }
+        }
+
+        function backspaceSetup() {
+            const target = setupState.phase === 'p1' ? setupState.p1Secret : setupState.p2Secret;
+            for (let i = config.digits - 1; i >= 0; i--) { if (target[i] !== null) { target[i] = null; activeIdx = i; break; } }
+            sfx.delete(); renderSetupSlots(); renderSetupKeypad(); checkReady();
+        }
+
+        function randomizeSetup() {
+            const target = genRandArr(config.digits);
+            if (setupState.phase === 'p1') setupState.p1Secret = target; else setupState.p2Secret = target;
+            sfx.launch(); activeIdx = 0; renderSetupSlots(); renderSetupKeypad(); checkReady();
+        }
+
+        function checkReady() {
+            const target = setupState.phase === 'p1' ? setupState.p1Secret : setupState.p2Secret;
+            const isFull = !target.includes(null);
+            const btn = document.getElementById('start-btn');
+            btn.disabled = !isFull;
+            btn.style.opacity = isFull ? "1" : "0.5";
+        }
+
+        function handleStartOrNext() {
+            if (config.mode === '2p' && setupState.phase === 'p1') {
+                sfx.launch(); setupState.phase = 'p2'; activeIdx = 0;
+                renderSetupSlots(); renderSetupKeypad(); updateSetupUI();
+            } else startGame();
+        }
+
+        // --- GAME CORE ---
+        function startGame() {
+            sfx.launch();
+            config.showP1Stats = document.getElementById('showP1StatsToggle').checked;
+            config.showP2Stats = document.getElementById('showP2StatsToggle').checked;
+            
+            p1Secret = [...setupState.p1Secret];
+            p2Secret = config.mode === '1p' ? genRandArr(config.digits) : [...setupState.p2Secret];
+            allPerms = genPerms(config.digits);
+            p1Knowledge = [...allPerms]; p2Knowledge = [...allPerms];
+            
+            // Stats visibility
+            document.getElementById('playerStatBox').style.display = config.showP1Stats ? 'block' : 'none';
+            document.getElementById('cpuStatBox').style.display = config.showP2Stats ? 'block' : 'none';
+            
+            // Bottom UI Setup
+            const secretDisplay = document.getElementById('secret-code-display');
+            const turnInfo = document.getElementById('turn-info-container');
+            
+            if (config.mode === '1p') {
+                secretDisplay.classList.remove('hidden');
+                turnInfo.classList.add('hidden'); // CPUモードではターン表示を隠す
+                document.getElementById('displayMySecretBig').innerText = p1Secret.join('');
+                document.getElementById('displayMySecretBig').style.color = 'var(--neon-blue)';
+            } else {
+                secretDisplay.classList.add('hidden');
+                turnInfo.classList.remove('hidden'); // 2Pモードではターン表示を出す
+            }
+            
+            document.getElementById('setup-screen').classList.add('hidden-state');
+            document.getElementById('game-screen').classList.remove('hidden-state');
+            document.getElementById('exitBtn').classList.remove('hidden-state');
+            document.getElementById('turn-display').classList.remove('hidden-state');
+            
+            turn = 1; currentPlayer = 1; p1WonThisTurn = false; isProcessing = false;
+            initTurn();
+        }
+
+        function initTurn() {
+            currentGuess = Array(config.digits).fill(null);
+            activeIdx = 0;
+            document.getElementById('turnCounter').innerText = turn;
+            document.getElementById('game-input-label').innerText = `P${currentPlayer}: GUESS`;
+            
+            const indicator = document.getElementById('turn-indicator-text');
+            indicator.innerText = `PLAYER ${currentPlayer}`;
+            indicator.style.color = currentPlayer === 1 ? 'var(--neon-blue)' : 'var(--neon-pink)';
+            document.getElementById('p1-victory-flag').classList.toggle('hidden', !p1WonThisTurn);
+            
+            renderGameSlots();
+            renderGameKeypad();
+            updateStatsUI();
+            startTimer();
+        }
+
+        function renderGameSlots() {
+            const container = document.getElementById('inputSlots');
+            container.innerHTML = '';
+            currentGuess.forEach((val, i) => {
+                const div = document.createElement('div');
+                div.className = `slot ${i === activeIdx ? 'active' : ''}`;
+                div.innerText = val !== null ? val : '';
+                div.onclick = () => { sfx.delete(); currentGuess[i] = null; activeIdx = i; renderGameSlots(); renderGameKeypad(); };
+                container.appendChild(div);
+            });
+            document.getElementById('launchBtn').disabled = currentGuess.includes(null) || isProcessing;
+        }
+
+        function renderGameKeypad() {
+            const container = document.getElementById('gameKeypad');
+            container.innerHTML = '';
+            for(let i=0; i<=9; i++) {
+                const btn = document.createElement('button');
+                btn.className = "py-2 bg-white/5 border border-white/10 rounded-lg text-xs hover:bg-white/10 active:scale-95 transition-all disabled:opacity-10";
+                btn.innerText = i;
+                btn.disabled = currentGuess.includes(i) || isProcessing;
+                btn.onclick = () => { 
+                    sfx.tap(); currentGuess[activeIdx] = i; 
+                    let next = currentGuess.indexOf(null); if(next !== -1) activeIdx = next; 
+                    renderGameSlots(); renderGameKeypad(); 
+                };
+                container.appendChild(btn);
+            }
+        }
+
+        async function playerAction() {
+            if (isProcessing) return;
+            isProcessing = true;
+            document.getElementById('launchBtn').disabled = true;
+            clearInterval(gameTimerInterval);
+            sfx.launch();
+            
+            const targetSecret = currentPlayer === 1 ? p2Secret : p1Secret;
+            const res = checkResult(currentGuess, targetSecret);
+            
+            if (currentPlayer === 1) {
+                p1Knowledge = p1Knowledge.filter(p => { const r = checkResult(currentGuess, p); return r.hits === res.hits && r.blows === res.blows; });
+            } else {
+                p2Knowledge = p2Knowledge.filter(p => { const r = checkResult(currentGuess, p); return r.hits === res.hits && r.blows === res.blows; });
+            }
+            
+            await showAnnounce(currentGuess.join(''), res, currentPlayer);
+            addLog(currentPlayer === 1 ? 'player' : 'cpu', [...currentGuess], res);
+            
+            if (currentPlayer === 1) {
+                if (res.hits === config.digits) p1WonThisTurn = true;
+                
+                if (config.mode === '1p') {
+                    const cpuWon = await cpuTurn();
+                    checkGameOver(cpuWon);
+                } else {
+                    currentPlayer = 2;
+                    isProcessing = false;
+                    initTurn();
+                }
+            } else {
+                checkGameOver(res.hits === config.digits);
+            }
+        }
+
+        async function cpuTurn() {
+            await new Promise(r => setTimeout(r, 1000));
+            let guess;
+            let threshold = config.level === 3 ? 1.0 : (config.level === 2 ? 0.4 : 0.1);
+            if (Math.random() < threshold && p2Knowledge.length > 0) guess = p2Knowledge[Math.floor(Math.random() * p2Knowledge.length)];
+            else guess = allPerms[Math.floor(Math.random() * allPerms.length)];
+            
+            const res = checkResult(guess, p1Secret);
+            p2Knowledge = p2Knowledge.filter(p => { const r = checkResult(guess, p); return r.hits === res.hits && r.blows === res.blows; });
+            
+            await showAnnounce(guess.join(''), res, 2);
+            addLog('cpu', guess, res);
+            
+            return res.hits === config.digits;
+        }
+
+        function checkGameOver(p2WonThisTurn = false) {
+            if (p1WonThisTurn && p2WonThisTurn) {
+                endGame("DRAW", "両者が同時にコードを解明しました。引き分けです！");
+            } else if (p1WonThisTurn) {
+                endGame("P1 WIN", "プレイヤー1がコードの解読に成功しました！");
+            } else if (p2WonThisTurn) {
+                const name = config.mode === '1p' ? "CPU" : "PLAYER 2";
+                endGame(`${name} WIN`, `${name}がコードの解読に成功しました。敗北です...`);
+            } else {
+                turn++;
+                currentPlayer = 1;
+                p1WonThisTurn = false;
+                isProcessing = false;
+                initTurn();
+            }
+        }
+
+        function showAnnounce(num, res, player) {
+            return new Promise(resolve => {
+                const announce = document.getElementById('big-announce');
+                const bigNum = document.getElementById('big-number'), bigRes = document.getElementById('big-result'), bigP = document.getElementById('big-player');
+                bigNum.innerText = num;
+                bigNum.style.color = player === 1 ? 'var(--neon-blue)' : 'var(--neon-pink)';
+                bigRes.innerHTML = `<span class="hit">${res.hits}H</span> <span class="blow">${res.blows}B</span>`;
+                bigP.innerText = `PLAYER ${player}`;
+                announce.classList.add('show');
+                sfx.scan();
+                setTimeout(() => { announce.classList.remove('show'); setTimeout(resolve, 300); }, 1200);
+            });
+        }
+
+        function addLog(who, guess, res) {
+            const list = document.getElementById(who === 'player' ? 'playerHistory' : 'cpuHistory');
+            const item = document.createElement('div');
+            item.className = "flex justify-between items-center p-1.5 bg-white/5 border border-white/5 rounded-lg mb-1";
+            item.innerHTML = `<span class="font-mono text-xs tracking-widest ${who==='player'?'text-cyan-400':'text-pink-500'}">${guess.join('')}</span><span class="text-[9px]"><span class="hit">${res.hits}H</span> <span class="blow">${res.blows}B</span></span>`;
+            list.appendChild(item);
+            list.scrollTop = list.scrollHeight;
+        }
+
+        function updateStatsUI() {
+            const p1Len = p1Knowledge.length, p2Len = p2Knowledge.length;
+            document.getElementById('playerRemaining').innerText = p1Len.toLocaleString();
+            document.getElementById('playerProb').innerText = (100 / p1Len).toFixed(2) + "%";
+            document.getElementById('cpuRemaining').innerText = p2Len.toLocaleString();
+            document.getElementById('cpuProb').innerText = (100 / p2Len).toFixed(2) + "%";
+        }
+
+        function startTimer() {
+            clearInterval(gameTimerInterval);
+            if (config.timeLimit === 0) { document.getElementById('gameTimer').innerText = "♾️"; return; }
+            currentTime = config.timeLimit;
+            updateTimerUI();
+            gameTimerInterval = setInterval(() => {
+                currentTime--; updateTimerUI();
+                if (currentTime <= 0) { clearInterval(gameTimerInterval); endGame("TIME OVER", "時間切れです..."); }
+            }, 1000);
+        }
+        function updateTimerUI() { const el = document.getElementById('gameTimer'); el.innerText = currentTime + "s"; el.style.color = currentTime <= 5 ? "#ff0000" : "var(--neon-blue)"; }
+        function checkResult(guess, secret) {
+            let hits = 0, blows = 0;
+            guess.forEach((g, i) => { if(g === secret[i]) hits++; else if(secret.includes(g)) blows++; });
+            return { hits, blows };
+        }
+        function genRandArr(n) { const arr = []; while(arr.length < n) { let r = Math.floor(Math.random()*10); if(!arr.includes(r)) arr.push(r); } return arr; }
+        function genPerms(n) {
+            const res = [];
+            function bt(cur) { if(cur.length === n) { res.push([...cur]); return; } for(let i=0; i<=9; i++) { if(!cur.includes(i)) { cur.push(i); bt(cur); cur.pop(); } } }
+            bt([]); return res;
+        }
+        function randomizeGuess() { currentGuess = genRandArr(config.digits); activeIdx = 0; sfx.launch(); renderGameSlots(); renderGameKeypad(); }
+        function clearCurrentGuess() { currentGuess = Array(config.digits).fill(null); activeIdx = 0; sfx.delete(); renderGameSlots(); renderGameKeypad(); }
+        function backspaceGuess() { for (let i = config.digits - 1; i >= 0; i--) { if (currentGuess[i] !== null) { currentGuess[i] = null; activeIdx = i; break; } } sfx.delete(); renderGameSlots(); renderGameKeypad(); }
+        function endGame(title, body) {
+            clearInterval(gameTimerInterval);
+            document.getElementById('result-title').innerText = title;
+            document.getElementById('result-body').innerText = body;
+            document.getElementById('overlay').classList.remove('hidden-state');
+            if (title === "DRAW" || title.includes("WIN")) sfx.win(); else sfx.loss();
+        }
+        function exitToSetup() {
+            clearInterval(gameTimerInterval);
+            document.getElementById('game-screen').classList.add('hidden-state');
+            document.getElementById('overlay').classList.add('hidden-state');
+            document.getElementById('setup-screen').classList.remove('hidden-state');
+            document.getElementById('exitBtn').classList.add('hidden-state');
+            document.getElementById('turn-display').classList.add('hidden-state');
+            document.getElementById('playerHistory').innerHTML = '';
+            document.getElementById('cpuHistory').innerHTML = '';
+            resetSetup();
+        }
+        function initStars() {
+            const canvas = document.getElementById('starCanvas');
+            const ctx = canvas.getContext('2d');
+            let stars = [];
+            const resize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; createStars(); };
+            const createStars = () => { stars = []; for (let i = 0; i < 200; i++) stars.push({ x: Math.random()*canvas.width, y: Math.random()*canvas.height, s: Math.random()*2, v: Math.random()*0.5 }); };
+            window.addEventListener('resize', resize); resize();
+            function anim() { ctx.clearRect(0,0,canvas.width,canvas.height); ctx.fillStyle = "white"; stars.forEach(s => { s.y += s.v; if(s.y > canvas.height) s.y = 0; ctx.globalAlpha = 0.5; ctx.fillRect(s.x, s.y, s.s, s.s); }); requestAnimationFrame(anim); }
+            anim();
+        }
+        window.onload = () => { initStars(); setMode('1p'); };
+    </script>
+</body>
+</html>
