@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hit & Blow: Cosmic Battle v2.5.0</title>
+    <title>Hit & Blow: Cosmic Battle v2.5.1</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         :root {
@@ -160,7 +160,7 @@
         }
     </style>
 </head>
-<body class="flex flex-col h-screen" onclick="handleUserInteraction()">
+<body class="flex flex-col h-screen" onmousedown="handleUserInteraction()" ontouchstart="handleUserInteraction()">
 
     <canvas class="stars" id="starCanvas"></canvas>
 
@@ -198,7 +198,10 @@
     <!-- SETUP SCREEN -->
     <div id="setup-screen" class="flex-1 flex items-center justify-center p-2">
         <div class="glass-panel p-4 max-w-xl w-full border border-cyan-500/30 shadow-2xl">
-            <h1 class="text-xl font-light tracking-widest text-center mb-4 uppercase">MISSION SETUP</h1>
+            <div class="flex justify-between items-center mb-4">
+                <h1 class="text-xl font-light tracking-widest uppercase">MISSION SETUP</h1>
+                <div id="audio-hint" class="text-[7px] text-cyan-400 animate-pulse border border-cyan-400/30 px-2 py-0.5 rounded">TAP ANYWHERE TO ACTIVATE AUDIO</div>
+            </div>
             
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div class="space-y-4">
@@ -371,30 +374,71 @@
             osc.start(); osc.stop(audioCtx.currentTime + duration);
         }
 
+        // どこかをタップした瞬間のオーディオ初期化
         function handleUserInteraction() {
-            if (audioCtx.state === 'suspended') audioCtx.resume().then(() => {
-                bgmGain.gain.linearRampToValueAtTime(currentBgmVol, audioCtx.currentTime + 0.5);
-                seGain.gain.linearRampToValueAtTime(currentSeVol, audioCtx.currentTime + 0.1);
-            });
-            if (!isBGMStarted) startCosmicMusic();
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume().then(() => {
+                    // フェードインで有効化
+                    bgmGain.gain.setTargetAtTime(currentBgmVol, audioCtx.currentTime, 0.2);
+                    seGain.gain.setTargetAtTime(currentSeVol, audioCtx.currentTime, 0.1);
+                    
+                    // 初回タップの音を鳴らす
+                    sfx.tap();
+                    
+                    // BGM開始
+                    if (!isBGMStarted) startCosmicMusic();
+                    
+                    // ヒントを消去
+                    const hint = document.getElementById('audio-hint');
+                    if(hint) hint.classList.add('hidden');
+                });
+            } else if (!isBGMStarted) {
+                // コンテキストが稼働中でBGM未開始なら開始
+                startCosmicMusic();
+                bgmGain.gain.setTargetAtTime(currentBgmVol, audioCtx.currentTime, 0.2);
+                seGain.gain.setTargetAtTime(currentSeVol, audioCtx.currentTime, 0.1);
+                const hint = document.getElementById('audio-hint');
+                if(hint) hint.classList.add('hidden');
+            }
         }
 
         function startCosmicMusic() {
             if (isBGMStarted) return;
             isBGMStarted = true;
+            // メインの低音リズム
             setInterval(() => {
-                if (bgmStep % 4 === 0) playTone(40, 'sine', 0.4, 0.7, bgmGain);
-                if (Math.random() < 0.1) playTone([261, 311, 349, 392][Math.floor(Math.random()*4)], 'triangle', 1.0, 0.1, bgmGain);
+                if (bgmStep % 4 === 0) playTone(45, 'sine', 0.5, 0.7, bgmGain);
+                if (bgmStep % 8 === 4) playTone(60, 'sine', 0.3, 0.4, bgmGain);
+                
+                // ランダムなアンビエント音
+                if (Math.random() < 0.12) {
+                    const freqs = [261.63, 311.13, 349.23, 392.00, 466.16];
+                    playTone(freqs[Math.floor(Math.random()*freqs.length)], 'triangle', 1.5, 0.15, bgmGain);
+                }
                 bgmStep++;
-            }, 250);
+            }, 200);
         }
 
         function updateVolume(type, val) {
             const v = parseFloat(val);
-            if (type === 'bgm') { currentBgmVol = v; bgmGain.gain.setTargetAtTime(v, audioCtx.currentTime, 0.1); document.getElementById('bgmLabel').innerText = Math.round(v * 100); }
-            else { currentSeVol = v; seGain.gain.setTargetAtTime(v, audioCtx.currentTime, 0.1); document.getElementById('seLabel').innerText = Math.round(v * 100); }
+            if (type === 'bgm') { 
+                currentBgmVol = v; 
+                bgmGain.gain.setTargetAtTime(v, audioCtx.currentTime, 0.1); 
+                document.getElementById('bgmLabel').innerText = Math.round(v * 100); 
+            } else { 
+                currentSeVol = v; 
+                seGain.gain.setTargetAtTime(v, audioCtx.currentTime, 0.1); 
+                document.getElementById('seLabel').innerText = Math.round(v * 100); 
+            }
         }
-        function resetAudio() { updateVolume('bgm', 0.5); document.getElementById('bgmVolume').value = 0.5; updateVolume('se', 0.5); document.getElementById('seVolume').value = 0.5; sfx.tap(); }
+
+        function resetAudio() { 
+            updateVolume('bgm', 0.5); 
+            document.getElementById('bgmVolume').value = 0.5; 
+            updateVolume('se', 0.5); 
+            document.getElementById('seVolume').value = 0.5; 
+            sfx.tap(); 
+        }
 
         // --- GAME STATE ---
         let config = { digits: 4, level: 2, timeLimit: 0, showP1Stats: true, showP2Stats: true, mode: '1p' };
@@ -414,17 +458,20 @@
             document.getElementById('level-setting').style.display = m === '1p' ? 'block' : 'none';
             document.getElementById('p2-name-label').innerText = m === '1p' ? 'CPU' : 'PLAYER 2';
             resetSetup();
+            sfx.tap();
         }
 
         function setDigits(n) {
             config.digits = n;
             [3,4,5].forEach(v => document.getElementById(`btn-d${v}`).className = `flex-1 py-1 rounded border border-white/10 text-xs ${v===n ? 'bg-cyan-600' : 'bg-white/5'}`);
             resetSetup();
+            sfx.tap();
         }
 
         function setLevel(n) {
             config.level = n;
             [1,2,3].forEach(v => document.getElementById(`btn-l${v}`).className = `flex-1 py-1 rounded border border-white/10 text-[9px] ${v===n ? 'bg-cyan-600' : 'bg-white/5'}`);
+            sfx.tap();
         }
 
         function updateTimeSetting(val) {
@@ -524,22 +571,20 @@
             allPerms = genPerms(config.digits);
             p1Knowledge = [...allPerms]; p2Knowledge = [...allPerms];
             
-            // Stats visibility
             document.getElementById('playerStatBox').style.display = config.showP1Stats ? 'block' : 'none';
             document.getElementById('cpuStatBox').style.display = config.showP2Stats ? 'block' : 'none';
             
-            // Bottom UI Setup
             const secretDisplay = document.getElementById('secret-code-display');
             const turnInfo = document.getElementById('turn-info-container');
             
             if (config.mode === '1p') {
                 secretDisplay.classList.remove('hidden');
-                turnInfo.classList.add('hidden'); // CPUモードではターン表示を隠す
+                turnInfo.classList.add('hidden');
                 document.getElementById('displayMySecretBig').innerText = p1Secret.join('');
                 document.getElementById('displayMySecretBig').style.color = 'var(--neon-blue)';
             } else {
                 secretDisplay.classList.add('hidden');
-                turnInfo.classList.remove('hidden'); // 2Pモードではターン表示を出す
+                turnInfo.classList.remove('hidden');
             }
             
             document.getElementById('setup-screen').classList.add('hidden-state');
@@ -707,21 +752,31 @@
                 if (currentTime <= 0) { clearInterval(gameTimerInterval); endGame("TIME OVER", "時間切れです..."); }
             }, 1000);
         }
-        function updateTimerUI() { const el = document.getElementById('gameTimer'); el.innerText = currentTime + "s"; el.style.color = currentTime <= 5 ? "#ff0000" : "var(--neon-blue)"; }
+
+        function updateTimerUI() { 
+            const el = document.getElementById('gameTimer'); 
+            el.innerText = currentTime + "s"; 
+            el.style.color = currentTime <= 5 ? "#ff0000" : "var(--neon-blue)"; 
+        }
+
         function checkResult(guess, secret) {
             let hits = 0, blows = 0;
             guess.forEach((g, i) => { if(g === secret[i]) hits++; else if(secret.includes(g)) blows++; });
             return { hits, blows };
         }
+
         function genRandArr(n) { const arr = []; while(arr.length < n) { let r = Math.floor(Math.random()*10); if(!arr.includes(r)) arr.push(r); } return arr; }
+        
         function genPerms(n) {
             const res = [];
             function bt(cur) { if(cur.length === n) { res.push([...cur]); return; } for(let i=0; i<=9; i++) { if(!cur.includes(i)) { cur.push(i); bt(cur); cur.pop(); } } }
             bt([]); return res;
         }
+
         function randomizeGuess() { currentGuess = genRandArr(config.digits); activeIdx = 0; sfx.launch(); renderGameSlots(); renderGameKeypad(); }
         function clearCurrentGuess() { currentGuess = Array(config.digits).fill(null); activeIdx = 0; sfx.delete(); renderGameSlots(); renderGameKeypad(); }
         function backspaceGuess() { for (let i = config.digits - 1; i >= 0; i--) { if (currentGuess[i] !== null) { currentGuess[i] = null; activeIdx = i; break; } } sfx.delete(); renderGameSlots(); renderGameKeypad(); }
+
         function endGame(title, body) {
             clearInterval(gameTimerInterval);
             document.getElementById('result-title').innerText = title;
@@ -729,6 +784,7 @@
             document.getElementById('overlay').classList.remove('hidden-state');
             if (title === "DRAW" || title.includes("WIN")) sfx.win(); else sfx.loss();
         }
+
         function exitToSetup() {
             clearInterval(gameTimerInterval);
             document.getElementById('game-screen').classList.add('hidden-state');
@@ -740,6 +796,7 @@
             document.getElementById('cpuHistory').innerHTML = '';
             resetSetup();
         }
+
         function initStars() {
             const canvas = document.getElementById('starCanvas');
             const ctx = canvas.getContext('2d');
@@ -750,7 +807,11 @@
             function anim() { ctx.clearRect(0,0,canvas.width,canvas.height); ctx.fillStyle = "white"; stars.forEach(s => { s.y += s.v; if(s.y > canvas.height) s.y = 0; ctx.globalAlpha = 0.5; ctx.fillRect(s.x, s.y, s.s, s.s); }); requestAnimationFrame(anim); }
             anim();
         }
-        window.onload = () => { initStars(); setMode('1p'); };
+
+        window.onload = () => { 
+            initStars(); 
+            setMode('1p'); 
+        };
     </script>
 </body>
 </html>
