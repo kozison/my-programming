@@ -589,6 +589,7 @@
             document.getElementById('playerRemaining').innerText = '---'; document.getElementById('cpuRemaining').innerText = '---';
             document.getElementById('playerProb').innerText = '0%'; document.getElementById('cpuProb').innerText = '0%';
             firstPlayerWon = false;
+            currentPlayer = 1; turn = 1;
         }
 
         window.createRoom = () => {
@@ -782,9 +783,12 @@
                 document.getElementById('live-2p-label').innerText = partnerName + " PREVIEW";
                 document.getElementById('label-1p-secret').innerText = myUserName + " CODE";
                 document.getElementById('label-2p-secret').innerText = partnerName + " CODE";
-            } else {
+            } else if(config.mode === 'online') {
                 document.getElementById('p1-panel-label').innerText = myUserName; 
                 document.getElementById('p2-name-label').innerText = partnerName; 
+            } else {
+                document.getElementById('p1-panel-label').innerText = "YOU"; 
+                document.getElementById('p2-name-label').innerText = config.mode === '1p' ? "CPU" : "2P"; 
             }
         }
 
@@ -814,7 +818,7 @@
         function hideAll() { document.querySelectorAll('#main-menu, #online-lobby, #setup-screen, #game-screen, #overlay').forEach(el => el.classList.add('hidden-state')); }
 
         window.showMainMenu = () => { disbandRoom(); clearInterval(gameTimerInterval); hideAll(); document.getElementById('main-menu').classList.remove('hidden-state'); document.getElementById('exitBtn').classList.add('hidden'); };
-        window.showOfflineSetup = () => { hideAll(); setupState.phase = 'p1'; document.getElementById('setup-screen').classList.remove('hidden-state'); document.getElementById('setup-options').classList.remove('hidden-state'); window.setMode('1p'); };
+        window.showOfflineSetup = () => { hideAll(); resetGameStateData(); setupState.phase = 'p1'; document.getElementById('setup-screen').classList.remove('hidden-state'); document.getElementById('setup-options').classList.remove('hidden-state'); window.setMode('1p'); };
         window.showOnlineLobby = () => { 
             hideAll(); 
             document.getElementById('online-lobby').classList.remove('hidden-state');
@@ -933,11 +937,13 @@
 
         async function startGame() { 
             isGameActive = true; config.showP1Stats = true; config.showP2Stats = true;
-            p1Secret = [...setupState.p1Secret]; p2Secret = config.mode === '1p' ? genRandArr(config.digits) : [...setupState.p2Secret]; 
+            p1Secret = [...setupState.p1Secret]; 
+            p2Secret = config.mode === '1p' ? genRandArr(config.digits) : [...setupState.p2Secret]; 
             startingPlayer = 1; currentPlayer = startingPlayer;
-            turn = 1; document.getElementById('p1-panel-label').innerText = "YOU"; document.getElementById('p2-name-label').innerText = config.mode === '1p' ? "CPU" : "2P";
+            turn = 1; 
+            updateUILabels();
             startGameUI(); 
-            await showTurnAnnounce(startingPlayer === 1 ? "1P IS FIRST" : "2P IS FIRST", startingPlayer === 1);
+            await showTurnAnnounce(startingPlayer === 1 ? "YOU ARE FIRST" : "ENEMY IS FIRST", startingPlayer === 1);
         }
 
         function startGameUI() {
@@ -973,7 +979,7 @@
                 if (config.mode === '2p') {
                     mySecretArea.innerText = "?".repeat(config.digits); codeLabel.innerText = "LOCAL CODE HIDDEN";
                 } else {
-                    mySecretArea.innerText = (myPlayerNum === 1 ? p1Secret : p2Secret).join('');
+                    mySecretArea.innerText = p1Secret.join('');
                     codeLabel.innerText = "YOUR SECRET CODE";
                 }
             }
@@ -997,6 +1003,9 @@
             } else if (config.mode === 'online') {
                 statusText = (currentPlayer === myPlayerNum) ? "YOUR TURN" : "ENEMY TURN";
                 colorClass = (currentPlayer === myPlayerNum) ? "text-[#00f2ff]" : "text-[#ff00e5]";
+            } else if (config.mode === '1p') {
+                statusText = (currentPlayer === 1) ? "YOUR TURN" : "ENEMY TURN";
+                colorClass = (currentPlayer === 1) ? "text-[#00f2ff]" : "text-[#ff00e5]";
             } else {
                 statusText = (currentPlayer === 1 ? "1P TURN" : "2P TURN");
                 colorClass = (currentPlayer === 1 ? "text-[#00f2ff]" : "text-[#ff00e5]");
@@ -1071,18 +1080,20 @@
         window.playerAction = async () => {
             if (isProcessing || !isGameActive) return;
             isProcessing = true; clearInterval(gameTimerInterval); sfx.launch();
-            let targetS = (myPlayerNum === 1 ? p2Secret : p1Secret);
+            
+            // 自分(1P)のアクション
+            let targetS = p2Secret;
             const res = checkResult(currentGuess, targetS); const guessCopy = [...currentGuess];
             
-            const actionData = { type: 'action', guess: guessCopy, res: res, player: myPlayerNum };
             if(config.mode === 'online' && conn && conn.open) {
+                const actionData = { type: 'action', guess: guessCopy, res: res, player: myPlayerNum };
                 conn.send(actionData);
                 if (myPlayerNum === 1) broadcastToSpectators(actionData);
             }
             
-            await showAnnounce(guessCopy.join(''), res, myPlayerNum); if (!isGameActive) return;
+            await showAnnounce(guessCopy.join(''), res, 1); if (!isGameActive) return;
 
-            addLog(myPlayerNum, guessCopy, res);
+            addLog(1, guessCopy, res);
 
             const isFirstPlayerTurn = (currentPlayer === startingPlayer);
 
@@ -1096,9 +1107,22 @@
                 if (!isFirstPlayerTurn && firstPlayerWon) return endGame(isSpectator ? "1P WIN" : "YOU LOSE");
             }
 
-            currentPlayer = (currentPlayer === 1 ? 2 : 1); 
-            if (currentPlayer === startingPlayer) turn++;
-            initTurn(); 
+            if (config.mode === '1p') { 
+                const cpuWon = await cpuTurn(); 
+                if (cpuWon) {
+                    if (firstPlayerWon) return endGame("DRAW");
+                    return endGame("YOU LOSE");
+                } else if (firstPlayerWon) {
+                    return endGame("YOU WIN"); 
+                } else { 
+                    turn++; 
+                    initTurn(); 
+                }
+            } else { 
+                currentPlayer = (currentPlayer === 1 ? 2 : 1); 
+                if (currentPlayer === startingPlayer) turn++;
+                initTurn(); 
+            }
         };
 
         window.handleRemoteAction = async (data) => {
@@ -1126,6 +1150,23 @@
             currentPlayer = (currentPlayer === 1 ? 2 : 1); 
             if (currentPlayer === startingPlayer) turn++;
             initTurn();
+        }
+
+        async function cpuTurn() {
+            currentPlayer = 2;
+            initTurn();
+            if (!isGameActive) return false; await new Promise(r => setTimeout(r, 1200)); if (!isGameActive) return false;
+            
+            let guess = (Math.random() < (config.level === 3 ? 1.0 : (config.level === 2 ? 0.4 : 0.1)) && p2Knowledge.length > 0) ? p2Knowledge[Math.floor(Math.random() * p2Knowledge.length)] : allPerms[Math.floor(Math.random() * allPerms.length)];
+            const res = checkResult(guess, p1Secret); 
+            
+            await showAnnounce(guess.join(''), res, 2); 
+            if (!isGameActive) return false; 
+            
+            addLog(2, guess, res);
+            
+            currentPlayer = 1;
+            return res.hits === config.digits;
         }
 
         function applyFullSync(data) {
@@ -1159,7 +1200,7 @@
             clearInterval(gameTimerInterval); isProcessing = false; isGameActive = false;
             let finalTitle = title;
             if(!isSpectator) {
-                if(title.includes("1P WIN")) finalTitle = (myPlayerNum === 1) ? "YOU WIN" : "YOU LOSE";
+                if(title.includes("1P WIN")) finalTitle = (myPlayerNum === 1 || config.mode !== 'online') ? "YOU WIN" : "YOU LOSE";
                 else if(title.includes("2P WIN")) finalTitle = (myPlayerNum === 2) ? "YOU WIN" : "YOU LOSE";
             }
 
@@ -1186,6 +1227,8 @@
                 if(config.mode === 'online') {
                     if (isSpectator) label = (pNum === 1) ? myUserName : partnerName;
                     else label = (pNum === myPlayerNum) ? "YOU" : partnerName;
+                } else {
+                    label = (pNum === 1) ? "YOU" : (config.mode === '1p' ? "CPU" : "2P");
                 }
                 document.getElementById('big-player').innerText = label;
                 announce.classList.add('show'); sfx.scan();
@@ -1205,8 +1248,16 @@
         }
 
         function addLogToDOM(pNum, guess, res) {
-            let listId = (pNum === (myPlayerNum || 1)) ? "playerHistory" : "cpuHistory";
-            if (isSpectator) listId = (pNum === 1) ? "playerHistory" : "cpuHistory";
+            let listId = "playerHistory"; // 左パネルデフォルト
+            
+            if (isSpectator) {
+                listId = (pNum === 1) ? "playerHistory" : "cpuHistory";
+            } else if (config.mode === 'online') {
+                listId = (pNum === myPlayerNum) ? "playerHistory" : "cpuHistory";
+            } else {
+                // オフライン: 1P = 自分(左), 2P = CPU/相手(右)
+                listId = (pNum === 1) ? "playerHistory" : "cpuHistory";
+            }
             
             const list = document.getElementById(listId);
             if(!list) return;
@@ -1221,9 +1272,11 @@
             let leftLen, rightLen;
 
             if (isSpectator) { leftLen = p1Len; rightLen = p2Len; } 
-            else {
+            else if (config.mode === 'online') {
                 leftLen = (myPlayerNum === 1) ? p1Len : p2Len;
                 rightLen = (myPlayerNum === 1) ? p2Len : p1Len;
+            } else {
+                leftLen = p1Len; rightLen = p2Len;
             }
 
             document.getElementById('playerRemaining').innerText = leftLen.toLocaleString(); 
