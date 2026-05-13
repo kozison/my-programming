@@ -132,7 +132,6 @@
 
     <canvas class="stars" id="starCanvas"></canvas>
 
-    <!-- LOADING OVERLAY -->
     <div id="loading-overlay" class="hidden-state fixed inset-0 bg-black/80 z-[500] flex items-center justify-center backdrop-blur-sm">
         <div class="text-center">
             <div class="w-10 h-10 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mb-3 mx-auto"></div>
@@ -140,14 +139,12 @@
         </div>
     </div>
 
-    <!-- ANNOUNCE -->
     <div id="big-announce">
         <div id="big-number" class="text-5xl font-mono tracking-widest mb-1 text-white">----</div>
         <div id="big-result" class="text-2xl font-bold">0H 0B</div>
         <div id="big-player" class="text-[10px] tracking-widest opacity-80 mt-1 uppercase">PLAYER</div>
     </div>
 
-    <!-- HEADER -->
     <header class="flex justify-between items-center p-1.5 px-4 glass-panel rounded-none border-t-0 border-x-0 shrink-0">
         <div class="flex items-center gap-4">
             <div id="turn-display" class="hidden text-[10px] tracking-widest opacity-60 uppercase">Round: <span id="turnCounter" class="text-cyan-400 font-bold">1</span></div>
@@ -347,7 +344,6 @@
                         <button onclick="if(window.resetSetupUI) window.resetSetupUI()" class="py-2.5 btn-mini rounded text-sm text-red-400">🗑️</button>
                     </div>
                     <button id="start-btn" onclick="if(window.handleStartOrNext) window.handleStartOrNext()" disabled class="w-full py-3 bg-cyan-500 text-black font-bold rounded-lg opacity-50 text-xs uppercase tracking-widest">Ready</button>
-                    <p id="online-waiting-info" class="hidden text-[9px] text-center mt-2 opacity-50 animate-pulse font-bold uppercase">Ready! Wait Partner...</p>
                 </div>
             </div>
         </div>
@@ -399,6 +395,7 @@
                         </div>
                     </div>
 
+                    <!-- プレイヤー用キーパッド -->
                     <div id="input-controls" class="space-y-2 max-w-[260px] mx-auto w-full">
                         <div class="grid grid-cols-5 gap-1.5" id="gameKeypad"></div>
                         <div class="grid grid-cols-4 gap-1.5">
@@ -657,7 +654,7 @@
                         startingPlayer: startingPlayer,
                         turn: turn,
                         isGameActive: isGameActive,
-                        p1WonThisRound: firstPlayerWon
+                        firstPlayerWon: firstPlayerWon
                     });
                 }
             });
@@ -679,12 +676,14 @@
             peer = new Peer();
             peer.on('open', () => {
                 const tempConn = peer.connect('HB-ROOM-' + rawId);
-                tempConn.on('open', () => { 
-                    setTimeout(() => {
-                        if (tempConn.open) tempConn.send({ type: 'request-info' }); 
-                    }, 250); 
-                });
                 let infoReceived = false;
+                
+                tempConn.on('open', () => { 
+                    // 確実に開いてからリクエストを送る。安定性のためのリトライ込み
+                    tempConn.send({ type: 'request-info' }); 
+                    setTimeout(() => { if (!infoReceived && tempConn.open) tempConn.send({ type: 'request-info' }); }, 500);
+                });
+                
                 tempConn.on('data', data => {
                     if(data.type === 'room-info' && !infoReceived) {
                         infoReceived = true; 
@@ -713,7 +712,7 @@
                         showError('join', 'Not Found or Timeout'); 
                         btn.innerText = "Search"; btn.disabled = false; btn.classList.remove('hidden'); 
                     } 
-                }, 4000);
+                }, 3000);
             });
             peer.on('error', (err) => {
                 showError('join', 'Connection Error');
@@ -726,19 +725,17 @@
             config.mode = 'online';
             if (conn && conn.open) {
                 conn.send({ type: 'guest-join', guestName: myUserName, isSpectator: isRoomFull });
-                setTimeout(() => {
-                    if (isRoomFull) {
-                        isSpectator = true; myPlayerNum = 0;
-                        document.getElementById('setup-screen').classList.remove('hidden-state');
-                        document.getElementById('setup-options').classList.add('hidden-state');
-                        document.getElementById('setup-waiting-msg').classList.remove('hidden');
-                        document.getElementById('setup-waiting-msg').innerText = "Syncing match data...";
-                        document.getElementById('start-btn').classList.add('hidden');
-                    } else {
-                        myPlayerNum = 2; isSpectator = false;
-                        enterOnlineSetup();
-                    }
-                }, 200); 
+                if (isRoomFull) {
+                    document.getElementById('setup-screen').classList.remove('hidden-state');
+                    document.getElementById('setup-options').classList.add('hidden-state');
+                    document.getElementById('setup-waiting-msg').classList.remove('hidden');
+                    document.getElementById('setup-waiting-msg').innerText = "Syncing match data...";
+                    document.getElementById('start-btn').classList.add('hidden');
+                    document.getElementById('online-lobby').classList.add('hidden-state');
+                } else {
+                    myPlayerNum = 2; isSpectator = false;
+                    enterOnlineSetup();
+                }
             }
         };
 
@@ -765,8 +762,8 @@
                 }
                 else if(data.type === 'start') {
                     if (myPlayerNum === 2) {
-                        config = data.config; currentPlayer = data.startPlayer; startingPlayer = data.startPlayer; 
-                        p1Secret = data.p1Secret; partnerName = data.hostName; startGameOnline();
+                        config = data.config; currentPlayer = data.startPlayer; startingPlayer = data.startPlayer; p1Secret = data.p1Secret; 
+                        partnerName = data.hostName; startGameOnline();
                     }
                 }
                 else if(data.type === 'action') { if(myPlayerNum === 1 || myPlayerNum === 2) window.handleRemoteAction(data); }
@@ -774,13 +771,12 @@
                     if (myPlayerNum === 1) broadcastToSpectators({ type: 'spectator-sync-guess', guess: data.guess, pNum: data.pNum });
                 }
                 else if(data.type === 'spectator-sync') {
-                    if (isSpectator) {
-                        config = data.config; myUserName = data.hostName; partnerName = data.guestName;
-                        p1Secret = data.p1Secret; p2Secret = data.p2Secret; p1History = data.p1History; p2History = data.p2History;
-                        currentPlayer = data.currentPlayer; startingPlayer = data.startingPlayer; turn = data.turn;
-                        isGameActive = data.isGameActive; firstPlayerWon = data.p1WonThisRound;
-                        startSpectatorMode();
-                    }
+                    isSpectator = true; myPlayerNum = 0;
+                    config = data.config; myUserName = data.hostName; partnerName = data.guestName;
+                    p1Secret = data.p1Secret; p2Secret = data.p2Secret; p1History = data.p1History; p2History = data.p2History;
+                    currentPlayer = data.currentPlayer; startingPlayer = data.startingPlayer; turn = data.turn;
+                    isGameActive = data.isGameActive; firstPlayerWon = data.firstPlayerWon;
+                    startSpectatorMode();
                 }
                 else if(data.type === 'spectator-action') { if(isSpectator) handleSpectatorAction(data); }
                 else if(data.type === 'spectator-sync-guess') {
@@ -832,6 +828,8 @@
             hideAll(); 
             document.getElementById('online-lobby').classList.remove('hidden-state');
             document.getElementById('join-preview').classList.add('hidden'); 
+            const sBtn = document.getElementById('search-btn');
+            if (sBtn) { sBtn.innerText = "Search"; sBtn.disabled = false; sBtn.classList.remove('hidden'); }
             disbandRoom(); 
         };
 
@@ -1040,6 +1038,8 @@
                 colorClass = isMyTurn ? "text-[#00f2ff]" : "text-[#ff00e5]";
                 
                 if (config.mode === '2p') { 
+                    statusText = (currentPlayer === 1 ? "1P TURN" : "2P TURN");
+                    colorClass = (currentPlayer === 1 ? "text-[#00f2ff]" : "text-[#ff00e5]");
                     currentGuess = Array(config.digits).fill(null); activeIdx = 0; 
                 }
             }
@@ -1073,8 +1073,6 @@
                 d2.innerText = (v2 !== null && v2 !== undefined) ? v2 : '';
                 c2.appendChild(d2);
             }
-            document.getElementById('spec-p1-name').innerText = "1P: " + myUserName;
-            document.getElementById('spec-p2-name').innerText = "2P: " + partnerName;
         }
 
         window.renderGameSlots = () => {
