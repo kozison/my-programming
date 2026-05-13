@@ -272,9 +272,8 @@
                             <div><span class="opacity-50">Time:</span> <span id="preview-time"></span></div>
                             <div><span class="opacity-50">Stats:</span> <span id="preview-stats"></span></div>
                         </div>
-                        <div class="grid grid-cols-2 gap-2 mt-2">
-                            <button id="join-as-player-btn" onclick="if(window.confirmJoin) window.confirmJoin('player')" class="py-2 bg-cyan-600 text-white font-bold rounded uppercase text-[10px]">Join as Player</button>
-                            <button onclick="if(window.confirmJoin) window.confirmJoin('spectator')" class="py-2 bg-white/10 text-white font-bold rounded uppercase text-[10px]">Join as Spectator</button>
+                        <div class="mt-2">
+                            <button id="join-dynamic-btn" onclick="if(window.confirmJoin) window.confirmJoin()" class="w-full py-2 bg-cyan-600 text-white font-bold rounded uppercase text-[10px]">Join</button>
                         </div>
                     </div>
                     <button id="search-btn" onclick="if(window.searchRoom) window.searchRoom()" class="w-full py-2 border border-white/20 rounded uppercase text-[11px] font-bold">Search</button>
@@ -564,6 +563,7 @@
         let isSpectator = false;
         let spectatorConns = [];
         let p1CurrentInput = [], p2CurrentInput = [];
+        let roomIsFull = false;
 
         function disbandRoom() {
             if (conn && conn.open) { conn.send({ type: 'disband' }); conn.close(); }
@@ -571,7 +571,7 @@
             spectatorConns = [];
             if (peer) { peer.destroy(); peer = null; }
             conn = null; hostReady = false; guestReady = false; isGameActive = false;
-            connectionSetupDone = false; isSpectator = false;
+            connectionSetupDone = false; isSpectator = false; roomIsFull = false;
             resetGameStateData();
             
             const sBtn = document.getElementById('search-btn');
@@ -632,8 +632,12 @@
                         broadcastToSpectators({ type: 'name-update', guestName: partnerName });
                     }
                 } else if (data.type === 'spectator-join') {
-                    spectatorConns.push(newConn);
-                    syncStateToSpectator(newConn);
+                    if(!(conn && conn.open)) {
+                        newConn.send({ type: 'error', msg: 'Game not ready' });
+                    } else {
+                        spectatorConns.push(newConn);
+                        syncStateToSpectator(newConn);
+                    }
                 }
             });
         }
@@ -679,28 +683,40 @@
                         infoReceived = true; 
                         config.digits = data.config.digits; 
                         partnerName = data.hostName || "Host"; 
+                        roomIsFull = data.isFull;
+                        
                         document.getElementById('preview-host-name').innerText = partnerName;
                         document.getElementById('preview-guest-name').innerText = data.guestName;
                         document.getElementById('preview-digits').innerText = data.config.digits;
                         document.getElementById('preview-time').innerText = data.config.timeLimit === 0 ? "♾️" : data.config.timeLimit + "s";
                         document.getElementById('preview-stats').innerText = data.config.showP1Stats ? "ON" : "OFF";
                         
-                        document.getElementById('join-preview').classList.remove('hidden');
-                        document.getElementById('join-as-player-btn').style.display = data.isFull ? 'none' : 'block';
+                        const dynamicBtn = document.getElementById('join-dynamic-btn');
+                        if (data.isFull) {
+                            dynamicBtn.innerText = "Join as Spectator";
+                            dynamicBtn.className = "w-full py-2 bg-white/10 text-white font-bold rounded uppercase text-[10px]";
+                        } else {
+                            dynamicBtn.innerText = "Join as Player";
+                            dynamicBtn.className = "w-full py-2 bg-cyan-600 text-white font-bold rounded uppercase text-[10px]";
+                        }
                         
+                        document.getElementById('join-preview').classList.remove('hidden');
                         btn.classList.add('hidden'); 
                         conn = tempConn;
+                    }
+                    if(data.type === 'error') {
+                        showError('join', data.msg); disbandRoom();
                     }
                 });
                 setTimeout(() => { if(!conn || !conn.open) { showError('join', 'Not Found'); btn.innerText = "Search"; btn.disabled = false; btn.classList.remove('hidden'); } }, 3000);
             });
         };
 
-        window.confirmJoin = (mode) => {
+        window.confirmJoin = () => {
             myUserName = document.getElementById('user-name-input').value.trim() || "User";
             config.mode = 'online';
             if (conn && conn.open) {
-                if (mode === 'player') {
+                if (!roomIsFull) {
                     isSpectator = false;
                     myPlayerNum = 2; 
                     conn.send({ type: 'guest-join', guestName: myUserName });
@@ -1004,8 +1020,8 @@
             if(!p1Cont || !p2Cont) return;
             p1Cont.innerHTML = ''; p2Cont.innerHTML = '';
             
-            const p1Vals = p1In || (p1CurrentInput.length === config.digits ? p1CurrentInput : Array(config.digits).fill(null));
-            const p2Vals = p2In || (p2CurrentInput.length === config.digits ? p2CurrentInput : Array(config.digits).fill(null));
+            const p1Vals = p1In || (p1CurrentInput && p1CurrentInput.length === config.digits ? p1CurrentInput : Array(config.digits).fill(null));
+            const p2Vals = p2In || (p2CurrentInput && p2CurrentInput.length === config.digits ? p2CurrentInput : Array(config.digits).fill(null));
 
             for(let i=0; i<config.digits; i++) {
                 const d1 = document.createElement('div'); d1.className = "mini-slot"; d1.style.borderColor = "var(--neon-blue)"; d1.innerText = (p1Vals[i] !== null && p1Vals[i] !== undefined) ? p1Vals[i] : '';
@@ -1031,9 +1047,12 @@
             document.getElementById('launchBtn').disabled = currentGuess.includes(null) || isProcessing || !isMyTurn;
             
             if (config.mode === 'online' && conn && conn.open && !isSpectator) {
-                const typingData = { type: 'typing', player: myPlayerNum, input: currentGuess };
+                const typingData = { type: 'typing', player: myPlayerNum, input: [...currentGuess] };
                 conn.send(typingData);
-                if (myPlayerNum === 1) broadcastToSpectators(typingData);
+                if (myPlayerNum === 1) {
+                    p1CurrentInput = [...currentGuess];
+                    broadcastToSpectators(typingData);
+                }
             }
         }
 
@@ -1113,8 +1132,8 @@
             resetGameStateData();
             config = data.config; p1Secret = data.p1Secret || []; p2Secret = data.p2Secret || [];
             p1History = data.p1History || []; p2History = data.p2History || [];
-            p1CurrentInput = data.p1CurrentInput || Array(config.digits).fill(null); 
-            p2CurrentInput = data.p2CurrentInput || Array(config.digits).fill(null);
+            p1CurrentInput = (data.p1CurrentInput && data.p1CurrentInput.length === config.digits) ? data.p1CurrentInput : Array(config.digits).fill(null); 
+            p2CurrentInput = (data.p2CurrentInput && data.p2CurrentInput.length === config.digits) ? data.p2CurrentInput : Array(config.digits).fill(null);
             currentPlayer = data.currentPlayer; turn = data.turn; isGameActive = data.isGameActive;
             firstPlayerWon = data.firstPlayerWon; startingPlayer = data.startingPlayer;
             myUserName = data.p1Name; partnerName = data.p2Name;
@@ -1139,7 +1158,6 @@
         function endGame(title) { 
             clearInterval(gameTimerInterval); isProcessing = false; isGameActive = false;
             let finalTitle = title;
-            // プレイヤー視点ならタイトルを上書き
             if(!isSpectator) {
                 if(title.includes("1P WIN")) finalTitle = (myPlayerNum === 1) ? "YOU WIN" : "YOU LOSE";
                 else if(title.includes("2P WIN")) finalTitle = (myPlayerNum === 2) ? "YOU WIN" : "YOU LOSE";
