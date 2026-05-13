@@ -786,9 +786,12 @@
             } else if(config.mode === 'online') {
                 document.getElementById('p1-panel-label').innerText = myUserName; 
                 document.getElementById('p2-name-label').innerText = partnerName; 
+            } else if(config.mode === '2p') {
+                document.getElementById('p1-panel-label').innerText = "1P"; 
+                document.getElementById('p2-name-label').innerText = "2P"; 
             } else {
                 document.getElementById('p1-panel-label').innerText = "YOU"; 
-                document.getElementById('p2-name-label').innerText = config.mode === '1p' ? "CPU" : "2P"; 
+                document.getElementById('p2-name-label').innerText = "CPU"; 
             }
         }
 
@@ -943,7 +946,8 @@
             turn = 1; 
             updateUILabels();
             startGameUI(); 
-            await showTurnAnnounce(startingPlayer === 1 ? "YOU ARE FIRST" : "ENEMY IS FIRST", startingPlayer === 1);
+            const text = (config.mode === '2p') ? "1P IS FIRST" : "YOU ARE FIRST";
+            await showTurnAnnounce(text, true);
         }
 
         function startGameUI() {
@@ -1007,8 +1011,10 @@
                 statusText = (currentPlayer === 1) ? "YOUR TURN" : "ENEMY TURN";
                 colorClass = (currentPlayer === 1) ? "text-[#00f2ff]" : "text-[#ff00e5]";
             } else {
+                // オフライン2P
                 statusText = (currentPlayer === 1 ? "1P TURN" : "2P TURN");
                 colorClass = (currentPlayer === 1 ? "text-[#00f2ff]" : "text-[#ff00e5]");
+                currentGuess = Array(config.digits).fill(null); activeIdx = 0;
             }
 
             const indicator = document.getElementById('turn-indicator-text');
@@ -1052,7 +1058,7 @@
                 div.onclick = () => { if(!isProcessing) { sfx.delete(); currentGuess[i] = null; activeIdx = i; window.renderGameSlots(); window.renderGameKeypad(); } };
                 container.appendChild(div);
             });
-            const isMyTurn = (config.mode === 'online') ? (currentPlayer === myPlayerNum) : (currentPlayer === 1);
+            const isMyTurn = (config.mode === 'online') ? (currentPlayer === myPlayerNum) : (true); // オフラインは常に自力操作可能
             document.getElementById('launchBtn').disabled = currentGuess.includes(null) || isProcessing || !isMyTurn;
             
             if (config.mode === 'online' && conn && conn.open && !isSpectator) {
@@ -1081,8 +1087,8 @@
             if (isProcessing || !isGameActive) return;
             isProcessing = true; clearInterval(gameTimerInterval); sfx.launch();
             
-            // 自分(1P)のアクション
-            let targetS = p2Secret;
+            const activePlayer = currentPlayer;
+            const targetS = (activePlayer === 1) ? p2Secret : p1Secret;
             const res = checkResult(currentGuess, targetS); const guessCopy = [...currentGuess];
             
             if(config.mode === 'online' && conn && conn.open) {
@@ -1091,20 +1097,24 @@
                 if (myPlayerNum === 1) broadcastToSpectators(actionData);
             }
             
-            await showAnnounce(guessCopy.join(''), res, 1); if (!isGameActive) return;
+            await showAnnounce(guessCopy.join(''), res, activePlayer); if (!isGameActive) return;
 
-            addLog(1, guessCopy, res);
+            addLog(activePlayer, guessCopy, res);
 
-            const isFirstPlayerTurn = (currentPlayer === startingPlayer);
+            const isFirstPlayerTurn = (activePlayer === startingPlayer);
 
             if (res.hits === config.digits) {
                 if (isFirstPlayerTurn) firstPlayerWon = true; 
                 else {
                     if (firstPlayerWon) return endGame("DRAW");
-                    return endGame(isSpectator ? "2P WIN" : "YOU WIN");
+                    const title = (config.mode === '2p' || isSpectator) ? (activePlayer === 1 ? "1P WIN" : "2P WIN") : "YOU WIN";
+                    return endGame(title);
                 }
             } else {
-                if (!isFirstPlayerTurn && firstPlayerWon) return endGame(isSpectator ? "1P WIN" : "YOU LOSE");
+                if (!isFirstPlayerTurn && firstPlayerWon) {
+                    const title = (config.mode === '2p' || isSpectator) ? (startingPlayer === 1 ? "1P WIN" : "2P WIN") : "YOU LOSE";
+                    return endGame(title);
+                }
             }
 
             if (config.mode === '1p') { 
@@ -1119,6 +1129,7 @@
                     initTurn(); 
                 }
             } else { 
+                // 2Pオフライン対戦またはオンライン対戦
                 currentPlayer = (currentPlayer === 1 ? 2 : 1); 
                 if (currentPlayer === startingPlayer) turn++;
                 initTurn(); 
@@ -1135,16 +1146,16 @@
 
             addLog(remotePNum, data.guess, res);
 
-            const isFirstPlayerTurn = (currentPlayer === startingPlayer);
+            const isFirstPlayerTurn = (remotePNum === startingPlayer);
 
             if (res.hits === config.digits) {
                 if (isFirstPlayerTurn) firstPlayerWon = true; 
                 else {
                     if (firstPlayerWon) return endGame("DRAW"); 
-                    return endGame(isSpectator ? "2P WIN" : "YOU LOSE"); 
+                    return endGame(isSpectator ? (remotePNum === 1 ? "1P WIN" : "2P WIN") : "YOU LOSE"); 
                 }
             } else {
-                if (!isFirstPlayerTurn && firstPlayerWon) return endGame(isSpectator ? "1P WIN" : "YOU WIN"); 
+                if (!isFirstPlayerTurn && firstPlayerWon) return endGame(isSpectator ? (startingPlayer === 1 ? "1P WIN" : "2P WIN") : "YOU WIN"); 
             }
             
             currentPlayer = (currentPlayer === 1 ? 2 : 1); 
@@ -1199,9 +1210,12 @@
         function endGame(title) { 
             clearInterval(gameTimerInterval); isProcessing = false; isGameActive = false;
             let finalTitle = title;
-            if(!isSpectator) {
-                if(title.includes("1P WIN")) finalTitle = (myPlayerNum === 1 || config.mode !== 'online') ? "YOU WIN" : "YOU LOSE";
+            if(!isSpectator && config.mode === 'online') {
+                if(title.includes("1P WIN")) finalTitle = (myPlayerNum === 1) ? "YOU WIN" : "YOU LOSE";
                 else if(title.includes("2P WIN")) finalTitle = (myPlayerNum === 2) ? "YOU WIN" : "YOU LOSE";
+            } else if(!isSpectator && config.mode === '1p') {
+                if(title.includes("WIN")) finalTitle = "YOU WIN";
+                else if(title.includes("LOSE")) finalTitle = "YOU LOSE";
             }
 
             document.getElementById('result-title').innerText = finalTitle; 
@@ -1227,8 +1241,10 @@
                 if(config.mode === 'online') {
                     if (isSpectator) label = (pNum === 1) ? myUserName : partnerName;
                     else label = (pNum === myPlayerNum) ? "YOU" : partnerName;
+                } else if(config.mode === '2p') {
+                    label = (pNum === 1) ? "1P" : "2P";
                 } else {
-                    label = (pNum === 1) ? "YOU" : (config.mode === '1p' ? "CPU" : "2P");
+                    label = (pNum === 1) ? "YOU" : "CPU";
                 }
                 document.getElementById('big-player').innerText = label;
                 announce.classList.add('show'); sfx.scan();
@@ -1248,14 +1264,14 @@
         }
 
         function addLogToDOM(pNum, guess, res) {
-            let listId = "playerHistory"; // 左パネルデフォルト
+            let listId = "playerHistory"; 
             
             if (isSpectator) {
                 listId = (pNum === 1) ? "playerHistory" : "cpuHistory";
             } else if (config.mode === 'online') {
                 listId = (pNum === myPlayerNum) ? "playerHistory" : "cpuHistory";
             } else {
-                // オフライン: 1P = 自分(左), 2P = CPU/相手(右)
+                // オフライン(1P/2P): 1Pは常に左, 2P(またはCPU)は常に右
                 listId = (pNum === 1) ? "playerHistory" : "cpuHistory";
             }
             
@@ -1293,7 +1309,11 @@
                 currentTime--; document.getElementById('gameTimer').innerText = currentTime + "s";
                 if (currentTime <= 0) { 
                     clearInterval(gameTimerInterval); 
-                    let title = (currentPlayer === 1) ? "2P WIN" : "1P WIN";
+                    // 時間切れ負け処理
+                    let title = "";
+                    if (isSpectator) title = (currentPlayer === 1 ? "2P WIN" : "1P WIN");
+                    else if(config.mode === 'online') title = (currentPlayer === myPlayerNum ? "YOU LOSE" : "YOU WIN");
+                    else title = (currentPlayer === 1 ? "2P WIN" : "1P WIN");
                     endGame(title); 
                 } 
             }, 1000);
