@@ -256,14 +256,19 @@
                         <p id="join-error" class="error-msg hidden"></p>
                     </div>
                     <div id="join-preview" class="hidden p-3 bg-white/5 border border-cyan-500/30 rounded-lg space-y-1.5 text-[10px] font-bold">
-                        <div class="text-cyan-400 text-[11px]">Room Found!</div>
-                        <div><span class="opacity-50">Host:</span> <span id="preview-host-name"></span></div>
-                        <div class="flex gap-3">
+                        <div class="flex justify-between items-center mb-1">
+                            <div class="text-cyan-400 text-[11px]">Room Found!</div>
+                            <div id="preview-status" class="text-pink-500 font-bold text-[9px] animate-pulse uppercase"></div>
+                        </div>
+                        <div class="flex justify-between">
+                            <div><span class="opacity-50">1P (Host):</span> <span id="preview-host-name"></span></div>
+                            <div><span class="opacity-50">2P:</span> <span id="preview-guest-name">---</span></div>
+                        </div>
+                        <div class="flex gap-3 mt-1">
                             <div><span class="opacity-50">Digits:</span> <span id="preview-digits"></span></div>
                             <div><span class="opacity-50">Time:</span> <span id="preview-time"></span></div>
-                            <div><span class="opacity-50">Stats:</span> <span id="preview-stats"></span></div>
                         </div>
-                        <button onclick="if(window.confirmJoin) window.confirmJoin()" id="join-btn" class="w-full py-2 bg-pink-500 text-white font-bold rounded mt-2 uppercase">JOIN NOW</button>
+                        <button onclick="if(window.confirmJoin) window.confirmJoin()" id="join-btn" class="w-full py-2 bg-pink-500 text-white font-bold rounded mt-2 uppercase transition-all">JOIN NOW</button>
                     </div>
                     <button id="search-btn" onclick="if(window.searchRoom) window.searchRoom()" class="w-full py-2 border border-white/20 rounded uppercase text-[11px] font-bold">Search</button>
                 </div>
@@ -334,7 +339,6 @@
                         <button onclick="if(window.resetSetupUI) window.resetSetupUI()" class="py-2.5 btn-mini rounded text-sm text-red-400">🗑️</button>
                     </div>
                     <button id="start-btn" onclick="if(window.handleStartOrNext) window.handleStartOrNext()" disabled class="w-full py-3 bg-cyan-500 text-black font-bold rounded-lg opacity-50 text-xs uppercase tracking-widest">Ready</button>
-                    <p id="online-waiting-info" class="hidden text-[9px] text-center mt-2 opacity-50 animate-pulse font-bold uppercase">Ready! Wait Partner...</p>
                 </div>
             </div>
         </div>
@@ -370,13 +374,17 @@
                         </div>
 
                         <!-- 観戦者用表示エリア -->
-                        <div id="spectator-guess-area" class="hidden flex-col gap-4 mb-2">
+                        <div id="spectator-guess-area" class="hidden flex-col gap-4 mb-2 mt-4">
                             <div>
-                                <p class="text-[9px] opacity-40 mb-1 uppercase font-bold text-cyan-400">1P GUESS</p>
+                                <div class="flex justify-between mb-1 px-1">
+                                    <span id="spec-p1-name" class="text-[9px] opacity-40 uppercase font-bold text-cyan-400">1P</span>
+                                </div>
                                 <div class="flex justify-center gap-2" id="spec-p1-slots"></div>
                             </div>
                             <div>
-                                <p class="text-[9px] opacity-40 mb-1 uppercase font-bold text-pink-500">2P GUESS</p>
+                                <div class="flex justify-between mb-1 px-1">
+                                    <span id="spec-p2-name" class="text-[9px] opacity-40 uppercase font-bold text-pink-500">2P</span>
+                                </div>
                                 <div class="flex justify-center gap-2" id="spec-p2-slots"></div>
                             </div>
                         </div>
@@ -548,10 +556,13 @@
         // ==========================================
         // 2. PEER.JS ONLINE LOGIC
         // ==========================================
-        let peer = null, conn = null, myUserName = "Guest", partnerName = "Partner", myPlayerNum = null;
+        let peer = null, conn = null, myUserName = "Guest", partnerName = "---", myPlayerNum = null;
         let hostReady = false, guestReady = false, isGameActive = false, startingPlayer = 1;
         let isSpectator = false, spectatorConns = [];
         let connectionSetupDone = false; 
+        let isRoomFull = false;
+
+        let specP1Guess = [], specP2Guess = [];
 
         function disbandRoom() {
             if (conn && conn.open) { conn.send({ type: 'disband' }); conn.close(); }
@@ -559,9 +570,10 @@
             if (peer) { peer.destroy(); peer = null; }
             conn = null; spectatorConns = []; isSpectator = false;
             hostReady = false; guestReady = false; isGameActive = false;
-            connectionSetupDone = false;
+            connectionSetupDone = false; isRoomFull = false;
             
             p1Secret = []; p2Secret = []; p1History = []; p2History = [];
+            specP1Guess = []; specP2Guess = [];
             setupState.phase = 'p1';
             setupState.p1Secret = Array(config.digits).fill(null);
             setupState.p2Secret = Array(config.digits).fill(null);
@@ -572,8 +584,6 @@
 
             const sBtn = document.getElementById('search-btn');
             if (sBtn) { sBtn.innerText = "Search"; sBtn.disabled = false; sBtn.classList.remove('hidden'); }
-            const jBtn = document.getElementById('join-btn');
-            if (jBtn) { jBtn.innerText = "JOIN NOW"; jBtn.disabled = false; }
         }
 
         window.createRoom = () => {
@@ -605,7 +615,7 @@
         function setupSpectatorConnection(connection) {
             connection.on('data', data => {
                 if(data.type === 'request-info') {
-                    connection.send({ type: 'room-info', config: config, hostName: myUserName, hasGuest: !!partnerName });
+                    connection.send({ type: 'room-info', config: config, hostName: myUserName, hasGuest: !!partnerName, guestName: partnerName });
                 }
                 else if(data.type === 'guest-join') {
                     connection.send({
@@ -650,20 +660,29 @@
                         infoReceived = true; 
                         config.digits = data.config.digits; 
                         partnerName = data.hostName || "Host"; 
+                        isRoomFull = data.hasGuest;
+
                         document.getElementById('preview-host-name').innerText = partnerName;
+                        document.getElementById('preview-guest-name').innerText = isRoomFull ? (data.guestName || "Playing") : "---";
                         document.getElementById('preview-digits').innerText = data.config.digits;
                         document.getElementById('preview-time').innerText = data.config.timeLimit === 0 ? "♾️" : data.config.timeLimit + "s";
                         document.getElementById('preview-stats').innerText = data.config.showP1Stats ? "ON" : "OFF";
                         
-                        const isFull = data.hasGuest; 
-                        document.getElementById('join-btn').innerText = isFull ? "SPECTATE NOW" : "JOIN NOW";
+                        document.getElementById('preview-status').innerText = isRoomFull ? "SPECTATE MODE" : "";
+                        document.getElementById('join-btn').innerText = isRoomFull ? "SPECTATE NOW" : "JOIN NOW";
+                        document.getElementById('join-btn').className = `w-full py-2 text-white font-bold rounded mt-2 uppercase transition-all ${isRoomFull ? 'bg-purple-600 hover:bg-purple-500' : 'bg-pink-600 hover:bg-pink-500'}`;
 
                         document.getElementById('join-preview').classList.remove('hidden');
                         btn.classList.add('hidden'); 
                         conn = tempConn; setupConnection(); 
                     }
                 });
-                setTimeout(() => { if(!conn || !conn.open) { showError('join', 'Not Found'); btn.innerText = "Search"; btn.disabled = false; btn.classList.remove('hidden'); } }, 3000);
+                setTimeout(() => { 
+                    if(!conn || !conn.open || !infoReceived) { 
+                        showError('join', 'Not Found or Timeout'); 
+                        btn.innerText = "Search"; btn.disabled = false; btn.classList.remove('hidden'); 
+                    } 
+                }, 3000);
             });
         };
 
@@ -671,13 +690,18 @@
             myUserName = document.getElementById('user-name-input').value.trim() || "Guest";
             config.mode = 'online';
             if (conn && conn.open) {
-                conn.send({ type: 'guest-join', guestName: myUserName });
-                setTimeout(() => {
-                    if (!isSpectator) {
-                        myPlayerNum = 2;
-                        enterOnlineSetup();
-                    }
-                }, 200); 
+                conn.send({ type: 'guest-join', guestName: myUserName, isSpectator: isRoomFull });
+                if (isRoomFull) {
+                    isSpectator = true; myPlayerNum = 0;
+                    document.getElementById('setup-screen').classList.remove('hidden-state');
+                    document.getElementById('setup-options').classList.add('hidden-state');
+                    document.getElementById('setup-waiting-msg').classList.remove('hidden');
+                    document.getElementById('setup-waiting-msg').innerText = "Syncing match data...";
+                    document.getElementById('start-btn').classList.add('hidden');
+                } else {
+                    myPlayerNum = 2; isSpectator = false;
+                    enterOnlineSetup();
+                }
             }
         };
 
@@ -687,13 +711,12 @@
 
             conn.on('data', data => {
                 if(data.type === 'request-info') {
-                    conn.send({ type: 'room-info', config: config, hostName: myUserName, hasGuest: !!partnerName });
+                    conn.send({ type: 'room-info', config: config, hostName: myUserName, hasGuest: !!(partnerName && partnerName !== "---"), guestName: partnerName });
                 }
                 else if(data.type === 'guest-join') {
-                    if (myPlayerNum === 1) { 
+                    if (myPlayerNum === 1 && !data.isSpectator) { 
                         partnerName = data.guestName || "Guest";
-                        document.getElementById('right-panel-label').innerText = partnerName;
-                        conn.send({ type: 'room-info', config: config, hostName: myUserName });
+                        conn.send({ type: 'room-info', config: config, hostName: myUserName, hasGuest: true, guestName: partnerName });
                     }
                 }
                 else if(data.type === 'ready') {
@@ -705,22 +728,44 @@
                 }
                 else if(data.type === 'start') {
                     if (myPlayerNum === 2) {
-                        config = data.config; currentPlayer = data.startPlayer; startingPlayer = data.startPlayer; 
-                        p1Secret = data.p1Secret; partnerName = data.hostName; startGameOnline();
+                        config = data.config; currentPlayer = data.startPlayer; startingPlayer = data.startPlayer; p1Secret = data.p1Secret; 
+                        partnerName = data.hostName; startGameOnline();
                     }
                 }
                 else if(data.type === 'action') { if(myPlayerNum === 1 || myPlayerNum === 2) window.handleRemoteAction(data); }
+                else if(data.type === 'sync-guess') {
+                    if (myPlayerNum === 1) broadcastToSpectators({ type: 'spectator-sync-guess', guess: data.guess, pNum: data.pNum });
+                }
                 else if(data.type === 'spectator-sync') {
-                    isSpectator = true; myPlayerNum = 0; config = data.config; myUserName = data.hostName; partnerName = data.guestName;
-                    p1Secret = data.p1Secret; p2Secret = data.p2Secret; p1History = data.p1History; p2History = data.p2History;
-                    currentPlayer = data.currentPlayer; startingPlayer = data.startingPlayer; turn = data.turn;
-                    isGameActive = data.isGameActive; firstPlayerWon = data.p1WonThisRound;
-                    startSpectatorMode();
+                    if (isSpectator) {
+                        config = data.config; myUserName = data.hostName; partnerName = data.guestName;
+                        p1Secret = data.p1Secret; p2Secret = data.p2Secret; p1History = data.p1History; p2History = data.p2History;
+                        currentPlayer = data.currentPlayer; startingPlayer = data.startingPlayer; turn = data.turn;
+                        isGameActive = data.isGameActive; firstPlayerWon = data.p1WonThisRound;
+                        startSpectatorMode();
+                    }
                 }
                 else if(data.type === 'spectator-action') { if(isSpectator) handleSpectatorAction(data); }
+                else if(data.type === 'spectator-sync-guess') {
+                    if (isSpectator) {
+                        if (data.pNum === 1) specP1Guess = data.guess; else specP2Guess = data.guess;
+                        renderSpectatorSlots();
+                    }
+                }
                 else if(data.type === 'disband') { alert("Room closed."); window.showOnlineLobby(); }
             });
             conn.on('close', () => { if(!document.getElementById('game-screen').classList.contains('hidden-state')) { window.showOnlineLobby(); } });
+        }
+
+        function broadcastSyncGuess() {
+            if (config.mode === 'online' && conn && conn.open) {
+                if (myPlayerNum === 1 || myPlayerNum === 2) {
+                    conn.send({ type: 'sync-guess', guess: currentGuess, pNum: myPlayerNum });
+                }
+                if (myPlayerNum === 1) {
+                    broadcastToSpectators({ type: 'spectator-sync-guess', guess: currentGuess, pNum: 1 });
+                }
+            }
         }
 
         function checkOnlineStart() {
@@ -778,9 +823,6 @@
 
         window.setMode = (m) => {
             config.mode = m;
-            document.getElementById('btn-m1p').className = `flex-1 py-1.5 rounded border border-white/10 text-[10px] font-bold ${m==='1p'?'bg-cyan-600':'bg-white/5'}`;
-            document.getElementById('btn-m2p').className = `flex-1 py-1.5 rounded border border-white/10 text-[10px] font-bold ${m==='2p'?'bg-cyan-600':'bg-white/5'}`;
-            document.getElementById('level-setting').style.display = m === '1p' ? 'block' : 'none';
             window.resetSetupUI();
         };
 
@@ -860,11 +902,12 @@
             p1Secret = [...setupState.p1Secret]; p2Secret = config.mode === '1p' ? genRandArr(config.digits) : [...setupState.p2Secret]; 
             startingPlayer = 1; currentPlayer = startingPlayer; turn = 1; 
             startGameUI(); 
-            await showTurnAnnounce("YOU ARE FIRST", true);
+            await showTurnAnnounce("1P IS FIRST", true);
         }
 
         function startSpectatorMode() {
             allPerms = genPerms(config.digits); p1Knowledge = [...allPerms]; p2Knowledge = [...allPerms];
+            specP1Guess = Array(config.digits).fill(null); specP2Guess = Array(config.digits).fill(null);
             startGameUI();
             p1History.forEach(h => {
                 addLogUI(1, h.guess, h.res);
@@ -875,6 +918,7 @@
                 p2Knowledge = p2Knowledge.filter(p => checkResultMatches(h.guess, p, h.res));
             });
             updateStatsUI();
+            renderSpectatorSlots();
         }
 
         function startGameUI() {
@@ -895,6 +939,7 @@
                 document.getElementById('player-guess-area').classList.add('hidden');
                 document.getElementById('input-controls').classList.add('hidden');
                 document.getElementById('spectator-guess-area').classList.remove('hidden');
+                document.getElementById('spectator-guess-area').classList.add('flex');
 
                 document.getElementById('player-secret-container').classList.add('hidden');
                 document.getElementById('spectator-secret-container').classList.remove('hidden');
@@ -902,8 +947,8 @@
                 document.getElementById('spec-p1-secret').innerText = p1Secret.join('');
                 document.getElementById('spec-p2-secret').innerText = p2Secret.join('');
             } else {
-                document.getElementById('left-panel-label').innerText = "YOU";
-                document.getElementById('right-panel-label').innerText = config.mode === '1p' ? "CPU" : (config.mode === 'online' ? partnerName : "2P");
+                document.getElementById('left-panel-label').innerText = config.mode === 'online' ? myUserName : "YOU";
+                document.getElementById('right-panel-label').innerText = config.mode === 'online' ? partnerName : (config.mode === '1p' ? "CPU" : "2P");
                 document.getElementById('left-stat-title').innerText = "YOUR SCAN PERCENT";
                 document.getElementById('right-stat-title').innerText = "ENEMY SCAN PERCENT";
 
@@ -919,6 +964,7 @@
                 document.getElementById('player-guess-area').classList.remove('hidden');
                 document.getElementById('input-controls').classList.remove('hidden');
                 document.getElementById('spectator-guess-area').classList.add('hidden');
+                document.getElementById('spectator-guess-area').classList.remove('flex');
                 document.getElementById('player-secret-container').classList.remove('hidden');
                 document.getElementById('spectator-secret-container').classList.add('hidden');
             }
@@ -942,6 +988,9 @@
             if (isSpectator) {
                 statusText = (currentPlayer === 1 ? "1P TURN" : "2P TURN");
                 colorClass = (currentPlayer === 1 ? "text-[#00f2ff]" : "text-[#ff00e5]");
+                specP1Guess = Array(config.digits).fill(null);
+                specP2Guess = Array(config.digits).fill(null);
+                renderSpectatorSlots();
             } else {
                 let isMyTurn = (config.mode === 'online') ? (currentPlayer === myPlayerNum) : (currentPlayer === 1);
                 statusText = isMyTurn ? "YOUR TURN" : "ENEMY TURN";
@@ -965,15 +1014,29 @@
             return pNum === 1 ? 'left' : 'right';
         }
 
+        function renderSpectatorSlots() {
+            if (!isSpectator) return;
+            const c1 = document.getElementById('spec-p1-slots'); c1.innerHTML = '';
+            const c2 = document.getElementById('spec-p2-slots'); c2.innerHTML = '';
+            
+            for(let i=0; i<config.digits; i++) {
+                let v1 = specP1Guess[i];
+                let d1 = document.createElement('div'); d1.className = `slot border-cyan-500/50 ${currentPlayer===1?'bg-cyan-900/40':'bg-black/50'}`;
+                d1.innerText = (v1 !== null && v1 !== undefined) ? v1 : '';
+                c1.appendChild(d1);
+                
+                let v2 = specP2Guess[i];
+                let d2 = document.createElement('div'); d2.className = `slot border-pink-500/50 ${currentPlayer===2?'bg-pink-900/40':'bg-black/50'}`;
+                d2.innerText = (v2 !== null && v2 !== undefined) ? v2 : '';
+                c2.appendChild(d2);
+            }
+            document.getElementById('spec-p1-name').innerText = "1P: " + myUserName;
+            document.getElementById('spec-p2-name').innerText = "2P: " + partnerName;
+        }
+
         window.renderGameSlots = () => {
             if (isSpectator) {
-                const c1 = document.getElementById('spec-p1-slots'); c1.innerHTML = '';
-                const c2 = document.getElementById('spec-p2-slots'); c2.innerHTML = '';
-                for(let i=0; i<config.digits; i++) {
-                    let d1 = document.createElement('div'); d1.className = `slot border-cyan-500/50 ${currentPlayer===1?'bg-cyan-900/40':'bg-black/50'}`;
-                    let d2 = document.createElement('div'); d2.className = `slot border-pink-500/50 ${currentPlayer===2?'bg-pink-900/40':'bg-black/50'}`;
-                    c1.appendChild(d1); c2.appendChild(d2);
-                }
+                renderSpectatorSlots();
                 return;
             }
 
@@ -981,7 +1044,7 @@
             currentGuess.forEach((val, i) => {
                 const div = document.createElement('div'); div.className = `slot ${i === activeIdx ? 'active' : ''}`;
                 div.innerText = val !== null ? val : ''; 
-                div.onclick = () => { if(!isProcessing) { sfx.delete(); currentGuess[i] = null; activeIdx = i; window.renderGameSlots(); window.renderGameKeypad(); } };
+                div.onclick = () => { if(!isProcessing) { sfx.delete(); currentGuess[i] = null; activeIdx = i; window.renderGameSlots(); window.renderGameKeypad(); broadcastSyncGuess(); } };
                 container.appendChild(div);
             });
             const isMyTurn = (config.mode === 'online') ? (currentPlayer === myPlayerNum) : true;
@@ -996,7 +1059,7 @@
                 btn.innerText = i; 
                 const isAlreadyUsed = currentGuess.includes(i);
                 btn.disabled = (isAlreadyUsed && currentGuess[activeIdx] !== i);
-                btn.onclick = () => { sfx.tap(); currentGuess[activeIdx] = i; let next = currentGuess.indexOf(null); if(next !== -1) activeIdx = next; window.renderGameSlots(); window.renderGameKeypad(); };
+                btn.onclick = () => { sfx.tap(); currentGuess[activeIdx] = i; let next = currentGuess.indexOf(null); if(next !== -1) activeIdx = next; window.renderGameSlots(); window.renderGameKeypad(); broadcastSyncGuess(); };
                 container.appendChild(btn);
             }
         }
@@ -1179,9 +1242,9 @@
         function genRandArr(n) { const arr = []; while(arr.length < n) { let r = Math.floor(Math.random()*10); if(!arr.includes(r)) arr.push(r); } return arr; }
         function genPerms(n) { const res = []; function bt(cur) { if(cur.length === n) { res.push([...cur]); return; } for(let i=0; i<=9; i++) { if(!cur.includes(i)) { cur.push(i); bt(cur); cur.pop(); } } } bt([]); return res; }
         
-        window.randomizeGuess = () => { currentGuess = genRandArr(config.digits); activeIdx = 0; sfx.launch(); window.renderGameSlots(); window.renderGameKeypad(); }
-        window.clearCurrentGuess = () => { currentGuess = Array(config.digits).fill(null); activeIdx = 0; sfx.delete(); window.renderGameSlots(); window.renderGameKeypad(); }
-        window.backspaceGuess = () => { for (let i = config.digits - 1; i >= 0; i--) { if (currentGuess[i] !== null) { currentGuess[i] = null; activeIdx = i; break; } } sfx.delete(); window.renderGameSlots(); window.renderGameKeypad(); }
+        window.randomizeGuess = () => { currentGuess = genRandArr(config.digits); activeIdx = 0; sfx.launch(); window.renderGameSlots(); window.renderGameKeypad(); broadcastSyncGuess(); }
+        window.clearCurrentGuess = () => { currentGuess = Array(config.digits).fill(null); activeIdx = 0; sfx.delete(); window.renderGameSlots(); window.renderGameKeypad(); broadcastSyncGuess(); }
+        window.backspaceGuess = () => { for (let i = config.digits - 1; i >= 0; i--) { if (currentGuess[i] !== null) { currentGuess[i] = null; activeIdx = i; break; } } sfx.delete(); window.renderGameSlots(); window.renderGameKeypad(); broadcastSyncGuess(); }
 
         window.addEventListener('DOMContentLoaded', () => {
             const canvas = document.getElementById('starCanvas'); const ctx = canvas.getContext('2d'); let stars = [];
