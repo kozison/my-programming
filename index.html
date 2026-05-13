@@ -376,11 +376,11 @@
                         <!-- 観戦者用リアルタイム入力表示 -->
                         <div id="spectator-live-inputs" class="hidden space-y-2 mb-4 bg-black/40 p-2 rounded-lg border border-white/5">
                             <div class="flex flex-col items-center gap-1">
-                                <span class="text-[8px] opacity-40 uppercase font-bold text-cyan-400">1P PREVIEW</span>
+                                <span class="text-[8px] opacity-40 uppercase font-bold text-cyan-400" id="live-1p-label">1P PREVIEW</span>
                                 <div id="live-1p-slots" class="flex gap-1"></div>
                             </div>
                             <div class="flex flex-col items-center gap-1">
-                                <span class="text-[8px] opacity-40 uppercase font-bold text-pink-500">2P PREVIEW</span>
+                                <span class="text-[8px] opacity-40 uppercase font-bold text-pink-500" id="live-2p-label">2P PREVIEW</span>
                                 <div id="live-2p-slots" class="flex gap-1"></div>
                             </div>
                         </div>
@@ -410,12 +410,12 @@
                         <!-- 観戦者用（両方のコード） -->
                         <div id="displayBothSecrets" class="hidden flex justify-around items-center w-full">
                             <div class="flex flex-col items-center">
-                                <span class="text-[8px] text-cyan-400 font-bold mb-1">1P CODE</span>
+                                <span class="text-[8px] text-cyan-400 font-bold mb-1" id="label-1p-secret">1P CODE</span>
                                 <div id="spectator-p1-secret" class="text-2xl font-mono tracking-widest text-cyan-500 font-bold">----</div>
                             </div>
                             <div class="w-[1px] h-10 bg-white/10 mx-2"></div>
                             <div class="flex flex-col items-center">
-                                <span class="text-[8px] text-pink-500 font-bold mb-1">2P CODE</span>
+                                <span class="text-[8px] text-pink-500 font-bold mb-1" id="label-2p-secret">2P CODE</span>
                                 <div id="spectator-p2-secret" class="text-2xl font-mono tracking-widest text-pink-500 font-bold">----</div>
                             </div>
                         </div>
@@ -563,6 +563,7 @@
         let connectionSetupDone = false; 
         let isSpectator = false;
         let spectatorConns = [];
+        let p1CurrentInput = [], p2CurrentInput = [];
 
         function disbandRoom() {
             if (conn && conn.open) { conn.send({ type: 'disband' }); conn.close(); }
@@ -571,7 +572,7 @@
             if (peer) { peer.destroy(); peer = null; }
             conn = null; hostReady = false; guestReady = false; isGameActive = false;
             connectionSetupDone = false; isSpectator = false;
-            p1Secret = []; p2Secret = [];
+            p1Secret = []; p2Secret = []; p1History = []; p2History = [];
             setupState.phase = 'p1';
             setupState.p1Secret = Array(config.digits).fill(null);
             setupState.p2Secret = Array(config.digits).fill(null);
@@ -623,7 +624,6 @@
                         partnerName = data.guestName || "Guest";
                         document.getElementById('p2-name-label').innerText = partnerName;
                         setupConnection();
-                        // 既に開いている観戦者へ名前の更新を通知
                         broadcastToSpectators({ type: 'name-update', guestName: partnerName });
                     }
                 } else if (data.type === 'spectator-join') {
@@ -643,11 +643,13 @@
                 type: 'full-sync',
                 config: config,
                 p1Name: myUserName,
-                p2Name: partnerName,
+                p2Name: (conn && conn.open) ? partnerName : "---",
                 p1Secret: p1Secret,
                 p2Secret: p2Secret,
                 p1History: p1History,
                 p2History: p2History,
+                p1CurrentInput: p1CurrentInput,
+                p2CurrentInput: p2CurrentInput,
                 currentPlayer: currentPlayer,
                 turn: turn,
                 isGameActive: isGameActive,
@@ -695,7 +697,7 @@
             if (conn && conn.open) {
                 if (mode === 'player') {
                     isSpectator = false;
-                    myPlayerNum = 2;
+                    myPlayerNum = 2; // 参加者は2P
                     conn.send({ type: 'guest-join', guestName: myUserName });
                     setupConnection();
                     enterOnlineSetup();
@@ -717,16 +719,19 @@
 
             conn.on('data', data => {
                 if(data.type === 'request-info') {
-                    conn.send({ type: 'room-info', config: config, hostName: myUserName });
+                    conn.send({ type: 'room-info', config: config, hostName: myUserName, guestName: partnerName });
                 }
                 else if(data.type === 'name-update') {
                     partnerName = data.guestName;
-                    document.getElementById('p2-name-label').innerText = partnerName;
+                    if(isGameActive) {
+                        if(isSpectator) document.getElementById('p2-name-label').innerText = partnerName;
+                        else if(myPlayerNum === 1) document.getElementById('p2-name-label').innerText = partnerName;
+                    }
                 }
                 else if(data.type === 'ready') {
-                    if (myPlayerNum === 1) { 
+                    if (myPlayerNum === 1) { // ホスト(1P)
                         guestReady = true; p2Secret = data.secret; partnerName = data.userName; checkOnlineStart();
-                    } else { 
+                    } else { // ゲスト(2P)
                         hostReady = true; p1Secret = data.secret; partnerName = data.userName;
                     }
                 }
@@ -745,7 +750,7 @@
                 else if(data.type === 'full-sync') {
                     if (isSpectator) applyFullSync(data);
                 }
-                else if(data.type === 'disband') { alert("Host left."); window.showOnlineLobby(); }
+                else if(data.type === 'disband') { alert("Partner left."); window.showOnlineLobby(); }
             });
             conn.on('close', () => { if(!document.getElementById('game-screen').classList.contains('hidden-state')) { window.showOnlineLobby(); } });
         }
@@ -887,23 +892,26 @@
 
         async function startGameOnline() {
             isGameActive = true; 
-            document.getElementById('p1-panel-label').innerText = (myPlayerNum === 1 || isSpectator) ? myUserName : partnerName; 
-            document.getElementById('p2-name-label').innerText = (myPlayerNum === 2) ? myUserName : partnerName;
-            
-            if(myPlayerNum === 1) { 
-                config.showP1Stats = document.getElementById('onlineStatsToggle').checked; 
-                config.showP2Stats = config.showP1Stats; 
-            } else if (isSpectator) {
-                config.showP1Stats = config.showP2Stats = true;
-            } else { 
-                config.showP1Stats = config.showP2Stats = true; 
+            // 名前ラベルの固定
+            if(isSpectator) {
+                document.getElementById('p1-panel-label').innerText = myUserName; // ホスト
+                document.getElementById('p2-name-label').innerText = partnerName; // ゲスト
+            } else if (myPlayerNum === 1) {
+                document.getElementById('p1-panel-label').innerText = myUserName; // 自分
+                document.getElementById('p2-name-label').innerText = partnerName; // 相手
+            } else {
+                document.getElementById('p1-panel-label').innerText = myUserName; // 自分
+                document.getElementById('p2-name-label').innerText = partnerName; // ホスト
             }
+            
+            // 確率の常時表示設定
+            config.showP1Stats = true; config.showP2Stats = true;
             startGameUI();
             await showTurnAnnounce(currentPlayer === myPlayerNum ? "YOU ARE FIRST" : (isSpectator ? "GAME START" : "YOU ARE SECOND"), currentPlayer === myPlayerNum);
         }
 
         async function startGame() { 
-            isGameActive = true; config.showP1Stats = document.getElementById('p1StatsToggle').checked; config.showP2Stats = document.getElementById('p2StatsToggle').checked;
+            isGameActive = true; config.showP1Stats = true; config.showP2Stats = true;
             p1Secret = [...setupState.p1Secret]; p2Secret = config.mode === '1p' ? genRandArr(config.digits) : [...setupState.p2Secret]; 
             startingPlayer = 1; currentPlayer = startingPlayer;
             turn = 1; document.getElementById('p1-panel-label').innerText = "YOU"; document.getElementById('p2-name-label').innerText = config.mode === '1p' ? "CPU" : "2P";
@@ -913,10 +921,9 @@
 
         function startGameUI() {
             sfx.launch(); allPerms = genPerms(config.digits); p1Knowledge = [...allPerms]; p2Knowledge = [...allPerms];
-            p1History = []; p2History = [];
             
-            document.getElementById('playerStatBox').style.display = config.showP1Stats ? 'block' : 'none'; 
-            document.getElementById('cpuStatBox').style.display = config.showP2Stats ? 'block' : 'none';
+            document.getElementById('playerStatBox').style.display = 'block'; 
+            document.getElementById('cpuStatBox').style.display = 'block';
             document.getElementById('playerHistory').innerHTML = ''; document.getElementById('cpuHistory').innerHTML = '';
             
             const mySecretArea = document.getElementById('displayMySecretBig');
@@ -933,6 +940,11 @@
                 document.getElementById('input-controls').classList.add('hidden');
                 document.getElementById('game-input-label').classList.add('hidden');
                 document.getElementById('inputSlots').classList.add('hidden');
+                // 観戦者用ラベルの更新
+                document.getElementById('live-1p-label').innerText = myUserName + " PREVIEW";
+                document.getElementById('live-2p-label').innerText = partnerName + " PREVIEW";
+                document.getElementById('label-1p-secret').innerText = myUserName + " CODE";
+                document.getElementById('label-2p-secret').innerText = partnerName + " CODE";
             } else {
                 mySecretArea.classList.remove('hidden');
                 bothSecretsArea.classList.add('hidden');
@@ -944,7 +956,7 @@
                 if (config.mode === '2p') {
                     mySecretArea.innerText = "?".repeat(config.digits); codeLabel.innerText = "LOCAL CODE HIDDEN";
                 } else {
-                    mySecretArea.innerText = (config.mode === 'online' ? (myPlayerNum === 1 ? p1Secret : p2Secret) : p1Secret).join('');
+                    mySecretArea.innerText = (myPlayerNum === 1 ? p1Secret : p2Secret).join('');
                     codeLabel.innerText = "YOUR SECRET CODE";
                 }
             }
@@ -968,13 +980,9 @@
             } else if (config.mode === 'online') {
                 statusText = (currentPlayer === myPlayerNum) ? "YOUR TURN" : "ENEMY TURN";
                 colorClass = (currentPlayer === myPlayerNum) ? "text-[#00f2ff]" : "text-[#ff00e5]";
-            } else if (config.mode === '2p') {
+            } else {
                 statusText = (currentPlayer === 1 ? "1P TURN" : "2P TURN");
                 colorClass = (currentPlayer === 1 ? "text-[#00f2ff]" : "text-[#ff00e5]");
-                currentGuess = Array(config.digits).fill(null); activeIdx = 0; 
-            } else {
-                statusText = (currentPlayer === 1) ? "YOUR TURN" : "ENEMY TURN";
-                colorClass = (currentPlayer === 1) ? "text-[#00f2ff]" : "text-[#ff00e5]";
             }
 
             const indicator = document.getElementById('turn-indicator-text');
@@ -994,35 +1002,19 @@
             const p2Cont = document.getElementById('live-2p-slots');
             p1Cont.innerHTML = ''; p2Cont.innerHTML = '';
             
-            const p1Vals = p1In || Array(config.digits).fill(null);
-            const p2Vals = p2In || Array(config.digits).fill(null);
+            const p1Vals = p1In || p1CurrentInput || Array(config.digits).fill(null);
+            const p2Vals = p2In || p2CurrentInput || Array(config.digits).fill(null);
 
             for(let i=0; i<config.digits; i++) {
-                const d1 = document.createElement('div'); d1.className = "mini-slot"; d1.innerText = p1Vals[i] !== null ? p1Vals[i] : '';
-                const d2 = document.createElement('div'); d2.className = "mini-slot"; d2.innerText = p2Vals[i] !== null ? p2Vals[i] : '';
+                const d1 = document.createElement('div'); d1.className = "mini-slot"; d1.style.borderColor = "var(--neon-blue)"; d1.innerText = p1Vals[i] !== null ? p1Vals[i] : '';
+                const d2 = document.createElement('div'); d2.className = "mini-slot"; d2.style.borderColor = "var(--neon-pink)"; d2.innerText = p2Vals[i] !== null ? p2Vals[i] : '';
                 p1Cont.appendChild(d1); p2Cont.appendChild(d2);
             }
         }
 
         function handleTypingUpdate(data) {
-            if (!isSpectator) return;
-            const p1In = data.player === 1 ? data.input : null;
-            const p2In = data.player === 2 ? data.input : null;
-            
-            const p1Cont = document.getElementById('live-1p-slots');
-            const p2Cont = document.getElementById('live-2p-slots');
-            
-            if (data.player === 1) {
-                p1Cont.innerHTML = '';
-                data.input.forEach(v => {
-                    const d = document.createElement('div'); d.className = "mini-slot"; d.innerText = v !== null ? v : ''; p1Cont.appendChild(d);
-                });
-            } else {
-                p2Cont.innerHTML = '';
-                data.input.forEach(v => {
-                    const d = document.createElement('div'); d.className = "mini-slot"; d.innerText = v !== null ? v : ''; p2Cont.appendChild(d);
-                });
-            }
+            if (data.player === 1) p1CurrentInput = data.input; else p2CurrentInput = data.input;
+            if (isSpectator) renderSpectatorLiveInputs();
         }
 
         window.renderGameSlots = () => {
@@ -1033,10 +1025,9 @@
                 div.onclick = () => { if(!isProcessing) { sfx.delete(); currentGuess[i] = null; activeIdx = i; window.renderGameSlots(); window.renderGameKeypad(); } };
                 container.appendChild(div);
             });
-            const isMyTurn = (config.mode === 'online') ? (currentPlayer === myPlayerNum) : (config.mode === '2p' ? true : (currentPlayer === 1));
+            const isMyTurn = (config.mode === 'online') ? (currentPlayer === myPlayerNum) : (currentPlayer === 1);
             document.getElementById('launchBtn').disabled = currentGuess.includes(null) || isProcessing || !isMyTurn;
             
-            // 入力状態を送信
             if (config.mode === 'online' && conn && conn.open && !isSpectator) {
                 const typingData = { type: 'typing', player: myPlayerNum, input: currentGuess };
                 conn.send(typingData);
@@ -1059,80 +1050,56 @@
         window.playerAction = async () => {
             if (isProcessing || !isGameActive) return;
             isProcessing = true; clearInterval(gameTimerInterval); sfx.launch();
-            let targetS = (config.mode === 'online') ? (myPlayerNum === 1 ? p2Secret : p1Secret) : (currentPlayer === 1 ? p2Secret : p1Secret);
+            let targetS = (myPlayerNum === 1 ? p2Secret : p1Secret);
             const res = checkResult(currentGuess, targetS); const guessCopy = [...currentGuess];
             
-            const actionData = { type: 'action', guess: guessCopy, res: res };
+            const actionData = { type: 'action', guess: guessCopy, res: res, player: myPlayerNum };
             if(config.mode === 'online' && conn && conn.open) {
                 conn.send(actionData);
                 if (myPlayerNum === 1) broadcastToSpectators(actionData);
             }
             
-            await showAnnounce(guessCopy.join(''), res, myPlayerNum || currentPlayer); if (!isGameActive) return;
+            await showAnnounce(guessCopy.join(''), res, myPlayerNum); if (!isGameActive) return;
 
-            addLog(currentPlayer === 1 ? 'player' : 'cpu', guessCopy, res);
+            addLog(myPlayerNum, guessCopy, res);
 
-            // 知識ベースの更新
-            if (currentPlayer === 1) p1Knowledge = p1Knowledge.filter(p => { const r = checkResult(guessCopy, p); return r.hits === res.hits && r.blows === res.blows; });
-            else p2Knowledge = p2Knowledge.filter(p => { const r = checkResult(guessCopy, p); return r.hits === res.hits && r.blows === res.blows; });
-            
             const isFirstPlayerTurn = (currentPlayer === startingPlayer);
 
             if (res.hits === config.digits) {
-                if (isFirstPlayerTurn) {
-                    firstPlayerWon = true; 
-                } else {
+                if (isFirstPlayerTurn) firstPlayerWon = true; 
+                else {
                     if (firstPlayerWon) return endGame("DRAW");
-                    return endGame(config.mode === '2p' || isSpectator ? (currentPlayer === 1 ? "1P WIN" : "2P WIN") : "YOU WIN");
+                    return endGame(isSpectator ? "2P WIN" : (myPlayerNum === 1 ? "1P WIN" : "2P WIN"));
                 }
             } else {
-                if (!isFirstPlayerTurn && firstPlayerWon) {
-                    return endGame(config.mode === '2p' || isSpectator ? (startingPlayer === 1 ? "1P WIN" : "2P WIN") : "YOU LOSE");
-                }
+                if (!isFirstPlayerTurn && firstPlayerWon) return endGame(isSpectator ? "1P WIN" : (startingPlayer === 1 ? "1P WIN" : "2P WIN"));
             }
 
-            if (config.mode === '1p') { 
-                const cpuWon = await cpuTurn(); 
-                if (cpuWon) {
-                    if (firstPlayerWon) return endGame("DRAW");
-                    return endGame("YOU LOSE");
-                } else if (firstPlayerWon) return endGame("YOU WIN"); 
-                else { turn++; initTurn(); }
-            } else { 
-                currentPlayer = (currentPlayer === 1 ? 2 : 1); 
-                if (currentPlayer === startingPlayer) turn++;
-                initTurn(); 
-            }
+            currentPlayer = (currentPlayer === 1 ? 2 : 1); 
+            if (currentPlayer === startingPlayer) turn++;
+            initTurn(); 
         };
 
         window.handleRemoteAction = async (data) => {
             if (!isGameActive) return;
             isProcessing = true; clearInterval(gameTimerInterval);
             const res = data.res; 
-            const remotePNum = (myPlayerNum === 1 || isSpectator) ? 2 : 1;
+            const remotePNum = data.player;
             
             await showAnnounce(data.guess.join(''), res, remotePNum); if (!isGameActive) return;
 
-            addLog(remotePNum === 1 ? 'player' : 'cpu', data.guess, res);
-            if (remotePNum === 1) {
-                p1Knowledge = p1Knowledge.filter(p => { const r = checkResult(data.guess, p); return r.hits === res.hits && r.blows === res.blows; });
-            } else { 
-                p2Knowledge = p2Knowledge.filter(p => { const r = checkResult(data.guess, p); return r.hits === res.hits && r.blows === res.blows; }); 
-            }
+            addLog(remotePNum, data.guess, res);
 
             const isFirstPlayerTurn = (currentPlayer === startingPlayer);
 
             if (res.hits === config.digits) {
-                if (isFirstPlayerTurn) {
-                    firstPlayerWon = true; 
-                } else {
+                if (isFirstPlayerTurn) firstPlayerWon = true; 
+                else {
                     if (firstPlayerWon) return endGame("DRAW"); 
-                    return endGame(isSpectator ? "2P WIN" : "YOU LOSE"); 
+                    return endGame(isSpectator ? "2P WIN" : (remotePNum === 1 ? "1P WIN" : "2P WIN")); 
                 }
             } else {
-                if (!isFirstPlayerTurn && firstPlayerWon) {
-                    return endGame(isSpectator ? "1P WIN" : "YOU WIN"); 
-                }
+                if (!isFirstPlayerTurn && firstPlayerWon) return endGame(isSpectator ? "1P WIN" : (startingPlayer === 1 ? "1P WIN" : "2P WIN")); 
             }
             
             currentPlayer = (currentPlayer === 1 ? 2 : 1); 
@@ -1140,47 +1107,31 @@
             initTurn();
         }
 
-        async function cpuTurn() {
-            if (!isGameActive) return false; await new Promise(r => setTimeout(r, 1000)); if (!isGameActive) return false;
-            let guess = (Math.random() < (config.level === 3 ? 1.0 : (config.level === 2 ? 0.4 : 0.1)) && p2Knowledge.length > 0) ? p2Knowledge[Math.floor(Math.random() * p2Knowledge.length)] : allPerms[Math.floor(Math.random() * allPerms.length)];
-            const res = checkResult(guess, p1Secret); p2Knowledge = p2Knowledge.filter(p => { const r = checkResult(guess, p); return r.hits === res.hits && r.blows === res.blows; });
-            await showAnnounce(guess.join(''), res, 2); if (!isGameActive) return false; addLog('cpu', guess, res); return res.hits === config.digits;
-        }
-
         function applyFullSync(data) {
-            config = data.config;
-            p1Secret = data.p1Secret;
-            p2Secret = data.p2Secret;
-            p1History = data.p1History;
-            p2History = data.p2History;
-            currentPlayer = data.currentPlayer;
-            turn = data.turn;
-            isGameActive = data.isGameActive;
-            firstPlayerWon = data.firstPlayerWon;
-            startingPlayer = data.startingPlayer;
-            myUserName = data.p1Name;
-            partnerName = data.p2Name;
+            config = data.config; p1Secret = data.p1Secret; p2Secret = data.p2Secret;
+            p1History = data.p1History || []; p2History = data.p2History || [];
+            p1CurrentInput = data.p1CurrentInput || []; p2CurrentInput = data.p2CurrentInput || [];
+            currentPlayer = data.currentPlayer; turn = data.turn; isGameActive = data.isGameActive;
+            firstPlayerWon = data.firstPlayerWon; startingPlayer = data.startingPlayer;
+            myUserName = data.p1Name; partnerName = data.p2Name;
             
-            allPerms = genPerms(config.digits);
-            p1Knowledge = [...allPerms];
-            p2Knowledge = [...allPerms];
+            allPerms = genPerms(config.digits); p1Knowledge = [...allPerms]; p2Knowledge = [...allPerms];
             
-            // 履歴を適用して確率を再計算
-            p1History.forEach(h => {
-                p1Knowledge = p1Knowledge.filter(p => { const r = checkResult(h.guess, p); return r.hits === h.res.hits && r.blows === h.res.blows; });
-            });
-            p2History.forEach(h => {
-                p2Knowledge = p2Knowledge.filter(p => { const r = checkResult(h.guess, p); return r.hits === h.res.hits && r.blows === h.res.blows; });
-            });
-
             if (isGameActive) {
                 startGameUI();
-                // 履歴を表示
-                const p1List = document.getElementById('playerHistory');
-                const p2List = document.getElementById('cpuHistory');
+                const p1List = document.getElementById('playerHistory'); const p2List = document.getElementById('cpuHistory');
                 p1List.innerHTML = ''; p2List.innerHTML = '';
-                p1History.forEach(h => addLogToDOM('player', h.guess, h.res));
-                p2History.forEach(h => addLogToDOM('cpu', h.guess, h.res));
+                
+                // 履歴の再現
+                p1History.forEach(h => {
+                    addLogToDOM(1, h.guess, h.res);
+                    p1Knowledge = p1Knowledge.filter(p => { const r = checkResult(h.guess, p); return r.hits === h.res.hits && r.blows === h.res.blows; });
+                });
+                p2History.forEach(h => {
+                    addLogToDOM(2, h.guess, h.res);
+                    p2Knowledge = p2Knowledge.filter(p => { const r = checkResult(h.guess, p); return r.hits === h.res.hits && r.blows === h.res.blows; });
+                });
+                renderSpectatorLiveInputs();
                 initTurn();
             }
         }
@@ -1194,18 +1145,11 @@
 
         async function showTurnAnnounce(text, isFirst) {
             return new Promise(resolve => {
-                const announce = document.getElementById('big-announce'); 
-                const bigNum = document.getElementById('big-number');
-                bigNum.innerText = text;
-                bigNum.style.color = isFirst ? "var(--neon-blue)" : "var(--neon-pink)";
-                document.getElementById('big-result').innerHTML = "";
-                document.getElementById('big-player').innerText = "GAME START";
+                const announce = document.getElementById('big-announce'); const bigNum = document.getElementById('big-number');
+                bigNum.innerText = text; bigNum.style.color = isFirst ? "var(--neon-blue)" : "var(--neon-pink)";
+                document.getElementById('big-result').innerHTML = ""; document.getElementById('big-player').innerText = "GAME START";
                 announce.classList.add('show'); sfx.scan();
-                setTimeout(() => { 
-                    announce.classList.remove('show'); 
-                    bigNum.style.color = "white"; 
-                    setTimeout(resolve, 300); 
-                }, 1500);
+                setTimeout(() => { announce.classList.remove('show'); bigNum.style.color = "white"; setTimeout(resolve, 300); }, 1500);
             });
         }
 
@@ -1224,61 +1168,57 @@
             });
         }
 
-        function addLog(who, guess, res) {
-            if (who === 'player') p1History.push({guess, res});
-            else p2History.push({guess, res});
-            addLogToDOM(who, guess, res);
+        function addLog(pNum, guess, res) {
+            if (pNum === 1) {
+                p1History.push({guess, res});
+                p1Knowledge = p1Knowledge.filter(p => { const r = checkResult(guess, p); return r.hits === res.hits && r.blows === res.blows; });
+            } else {
+                p2History.push({guess, res});
+                p2Knowledge = p2Knowledge.filter(p => { const r = checkResult(guess, p); return r.hits === res.hits && r.blows === res.blows; });
+            }
+            addLogToDOM(pNum, guess, res);
         }
 
-        function addLogToDOM(who, guess, res) {
-            const list = document.getElementById(who === 'player' ? 'playerHistory' : 'cpuHistory');
+        function addLogToDOM(pNum, guess, res) {
+            let listId = "playerHistory"; // 左パネルデフォルト
+            if (isSpectator) {
+                listId = (pNum === 1) ? "playerHistory" : "cpuHistory";
+            } else {
+                listId = (pNum === myPlayerNum) ? "playerHistory" : "cpuHistory";
+            }
+            const list = document.getElementById(listId);
             const item = document.createElement('div'); item.className = "flex justify-between items-center p-1.5 bg-white/5 border border-white/5 rounded mb-1";
-            item.innerHTML = `<span class="font-mono text-[11px] tracking-widest ${who==='player'?'text-cyan-400':'text-pink-500'} font-bold">${guess.join('')}</span><span class="text-[10px] font-bold"><span class="hit">${res.hits}H</span> <span class="blow">${res.blows}B</span></span>`;
+            const color = (pNum === 1) ? 'text-cyan-400' : 'text-pink-500';
+            item.innerHTML = `<span class="font-mono text-[11px] tracking-widest ${color} font-bold">${guess.join('')}</span><span class="text-[10px] font-bold"><span class="hit">${res.hits}H</span> <span class="blow">${res.blows}B</span></span>`;
             list.appendChild(item); list.scrollTop = list.scrollHeight;
         }
 
         function updateStatsUI() {
-            let mLen, eLen;
+            let p1Len = p1Knowledge.length || 1, p2Len = p2Knowledge.length || 1;
+            let leftLen, rightLen, leftProb, rightProb;
+
             if (isSpectator) {
-                mLen = p1Knowledge.length || 1;
-                eLen = p2Knowledge.length || 1;
-                document.getElementById('p1-panel-label').innerText = myUserName;
-                document.getElementById('p2-name-label').innerText = partnerName;
+                leftLen = p1Len; rightLen = p2Len;
             } else {
-                const myScan = (myPlayerNum === 2) ? p2Knowledge : p1Knowledge;
-                const enemyScan = (myPlayerNum === 2) ? p1Knowledge : p2Knowledge;
-                mLen = myScan.length || 1;
-                eLen = enemyScan.length || 1;
+                leftLen = (myPlayerNum === 1) ? p1Len : p2Len;
+                rightLen = (myPlayerNum === 1) ? p2Len : p1Len;
             }
-            document.getElementById('playerRemaining').innerText = mLen.toLocaleString(); 
-            document.getElementById('playerProb').innerText = (100 / mLen).toFixed(2) + "%";
-            document.getElementById('cpuRemaining').innerText = eLen.toLocaleString(); 
-            document.getElementById('cpuProb').innerText = (100 / eLen).toFixed(2) + "%";
+
+            document.getElementById('playerRemaining').innerText = leftLen.toLocaleString(); 
+            document.getElementById('playerProb').innerText = (100 / leftLen).toFixed(2) + "%";
+            document.getElementById('cpuRemaining').innerText = rightLen.toLocaleString(); 
+            document.getElementById('cpuProb').innerText = (100 / rightLen).toFixed(2) + "%";
         }
 
         function startTimer() {
             clearInterval(gameTimerInterval); 
-            if (config.timeLimit === 0) {
-                document.getElementById('gameTimer').innerText = "♾️";
-                return;
-            }
-            currentTime = config.timeLimit; 
-            document.getElementById('gameTimer').innerText = currentTime + "s";
+            if (config.timeLimit === 0) { document.getElementById('gameTimer').innerText = "♾️"; return; }
+            currentTime = config.timeLimit; document.getElementById('gameTimer').innerText = currentTime + "s";
             gameTimerInterval = setInterval(() => { 
-                currentTime--; 
-                document.getElementById('gameTimer').innerText = currentTime + "s";
+                currentTime--; document.getElementById('gameTimer').innerText = currentTime + "s";
                 if (currentTime <= 0) { 
                     clearInterval(gameTimerInterval); 
-                    let title = "";
-                    if (isSpectator) {
-                        title = (currentPlayer === 1) ? "2P WIN" : "1P WIN";
-                    } else if (config.mode === 'online') {
-                        title = (currentPlayer === myPlayerNum) ? "YOU LOSE" : "YOU WIN";
-                    } else if (config.mode === '2p') {
-                        title = (currentPlayer === 1) ? "2P WIN" : "1P WIN";
-                    } else {
-                        title = (currentPlayer === 1) ? "YOU LOSE" : "YOU WIN";
-                    }
+                    let title = isSpectator ? (currentPlayer === 1 ? "2P WIN" : "1P WIN") : ((currentPlayer === myPlayerNum) ? "YOU LOSE" : "YOU WIN");
                     endGame(title); 
                 } 
             }, 1000);
