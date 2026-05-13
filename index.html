@@ -132,6 +132,7 @@
 
     <canvas class="stars" id="starCanvas"></canvas>
 
+    <!-- LOADING OVERLAY -->
     <div id="loading-overlay" class="hidden-state fixed inset-0 bg-black/80 z-[500] flex items-center justify-center backdrop-blur-sm">
         <div class="text-center">
             <div class="w-10 h-10 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mb-3 mx-auto"></div>
@@ -139,12 +140,14 @@
         </div>
     </div>
 
+    <!-- ANNOUNCE -->
     <div id="big-announce">
         <div id="big-number" class="text-5xl font-mono tracking-widest mb-1 text-white">----</div>
         <div id="big-result" class="text-2xl font-bold">0H 0B</div>
         <div id="big-player" class="text-[10px] tracking-widest opacity-80 mt-1 uppercase">PLAYER</div>
     </div>
 
+    <!-- HEADER -->
     <header class="flex justify-between items-center p-1.5 px-4 glass-panel rounded-none border-t-0 border-x-0 shrink-0">
         <div class="flex items-center gap-4">
             <div id="turn-display" class="hidden text-[10px] tracking-widest opacity-60 uppercase">Round: <span id="turnCounter" class="text-cyan-400 font-bold">1</span></div>
@@ -186,6 +189,7 @@
         </div>
     </header>
 
+    <!-- MAIN MENU -->
     <div id="main-menu" class="flex-1 flex items-center justify-center p-4">
         <div class="max-w-[300px] w-full space-y-6 mx-auto">
             <h1 class="text-6xl font-bold tracking-tight text-center mb-8 uppercase text-cyan-400 italic block w-full text-center">Hit&Blow</h1>
@@ -212,6 +216,7 @@
         </div>
     </div>
 
+    <!-- ONLINE LOBBY -->
     <div id="online-lobby" class="flex-1 flex items-center justify-center hidden-state p-4 compact-view">
         <div class="glass-panel p-6 max-w-xl w-full space-y-5 mx-auto">
             <div class="flex justify-between items-center">
@@ -225,6 +230,7 @@
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Create Room -->
                 <div class="space-y-3 border-r border-white/10 pr-0 md:pr-4">
                     <h2 class="text-sm font-bold text-cyan-400 uppercase italic">Create Room</h2>
                     <div>
@@ -249,6 +255,7 @@
                     <button onclick="if(window.createRoom) window.createRoom()" id="create-btn" class="w-full py-2 bg-cyan-500 text-black font-bold rounded uppercase text-[11px]">Create Room</button>
                 </div>
 
+                <!-- Join Room -->
                 <div class="space-y-3">
                     <h2 class="text-sm font-bold text-pink-500 uppercase italic">Join Room</h2>
                     <div>
@@ -267,6 +274,7 @@
                         <div class="flex gap-3 mt-1">
                             <div><span class="opacity-50">Digits:</span> <span id="preview-digits"></span></div>
                             <div><span class="opacity-50">Time:</span> <span id="preview-time"></span></div>
+                            <div><span class="opacity-50">Stats:</span> <span id="preview-stats"></span></div>
                         </div>
                         <button onclick="if(window.confirmJoin) window.confirmJoin()" id="join-btn" class="w-full py-2 bg-pink-500 text-white font-bold rounded mt-2 uppercase transition-all">JOIN NOW</button>
                     </div>
@@ -572,18 +580,35 @@
             hostReady = false; guestReady = false; isGameActive = false;
             connectionSetupDone = false; isRoomFull = false;
             
+            myPlayerNum = null; partnerName = "---"; startingPlayer = 1;
             p1Secret = []; p2Secret = []; p1History = []; p2History = [];
             specP1Guess = []; specP2Guess = [];
             setupState.phase = 'p1';
             setupState.p1Secret = Array(config.digits).fill(null);
             setupState.p2Secret = Array(config.digits).fill(null);
             
-            document.getElementById('leftHistoryList').innerHTML = ''; document.getElementById('rightHistoryList').innerHTML = '';
-            document.getElementById('leftRemaining').innerText = '---'; document.getElementById('rightRemaining').innerText = '---';
-            document.getElementById('leftProb').innerText = '0%'; document.getElementById('rightProb').innerText = '0%';
+            const p1Hist = document.getElementById('leftHistoryList');
+            if(p1Hist) p1Hist.innerHTML = ''; 
+            const p2Hist = document.getElementById('rightHistoryList');
+            if(p2Hist) p2Hist.innerHTML = '';
+            
+            const p1Rem = document.getElementById('leftRemaining');
+            if(p1Rem) p1Rem.innerText = '---'; 
+            const p2Rem = document.getElementById('rightRemaining');
+            if(p2Rem) p2Rem.innerText = '---';
+            
+            const p1Prob = document.getElementById('leftProb');
+            if(p1Prob) p1Prob.innerText = '0%'; 
+            const p2Prob = document.getElementById('rightProb');
+            if(p2Prob) p2Prob.innerText = '0%';
 
             const sBtn = document.getElementById('search-btn');
             if (sBtn) { sBtn.innerText = "Search"; sBtn.disabled = false; sBtn.classList.remove('hidden'); }
+            const jBtn = document.getElementById('join-btn');
+            if (jBtn) { jBtn.innerText = "JOIN NOW"; jBtn.disabled = false; }
+            
+            const wMsg = document.getElementById('setup-waiting-msg');
+            if(wMsg) wMsg.classList.add('hidden');
         }
 
         window.createRoom = () => {
@@ -615,7 +640,7 @@
         function setupSpectatorConnection(connection) {
             connection.on('data', data => {
                 if(data.type === 'request-info') {
-                    connection.send({ type: 'room-info', config: config, hostName: myUserName, hasGuest: !!partnerName, guestName: partnerName });
+                    connection.send({ type: 'room-info', config: config, hostName: myUserName, hasGuest: !!(partnerName && partnerName !== "---"), guestName: partnerName });
                 }
                 else if(data.type === 'guest-join') {
                     connection.send({
@@ -653,7 +678,11 @@
             peer = new Peer();
             peer.on('open', () => {
                 const tempConn = peer.connect('HB-ROOM-' + rawId);
-                tempConn.on('open', () => { tempConn.send({ type: 'request-info' }); });
+                tempConn.on('open', () => { 
+                    setTimeout(() => {
+                        if (tempConn.open) tempConn.send({ type: 'request-info' }); 
+                    }, 250); 
+                });
                 let infoReceived = false;
                 tempConn.on('data', data => {
                     if(data.type === 'room-info' && !infoReceived) {
@@ -678,11 +707,16 @@
                     }
                 });
                 setTimeout(() => { 
-                    if(!conn || !conn.open || !infoReceived) { 
+                    if(!infoReceived) { 
+                        if(tempConn) tempConn.close();
                         showError('join', 'Not Found or Timeout'); 
                         btn.innerText = "Search"; btn.disabled = false; btn.classList.remove('hidden'); 
                     } 
-                }, 3000);
+                }, 4000);
+            });
+            peer.on('error', (err) => {
+                showError('join', 'Connection Error');
+                btn.innerText = "Search"; btn.disabled = false; btn.classList.remove('hidden');
             });
         };
 
@@ -691,17 +725,19 @@
             config.mode = 'online';
             if (conn && conn.open) {
                 conn.send({ type: 'guest-join', guestName: myUserName, isSpectator: isRoomFull });
-                if (isRoomFull) {
-                    isSpectator = true; myPlayerNum = 0;
-                    document.getElementById('setup-screen').classList.remove('hidden-state');
-                    document.getElementById('setup-options').classList.add('hidden-state');
-                    document.getElementById('setup-waiting-msg').classList.remove('hidden');
-                    document.getElementById('setup-waiting-msg').innerText = "Syncing match data...";
-                    document.getElementById('start-btn').classList.add('hidden');
-                } else {
-                    myPlayerNum = 2; isSpectator = false;
-                    enterOnlineSetup();
-                }
+                setTimeout(() => {
+                    if (isRoomFull) {
+                        isSpectator = true; myPlayerNum = 0;
+                        document.getElementById('setup-screen').classList.remove('hidden-state');
+                        document.getElementById('setup-options').classList.add('hidden-state');
+                        document.getElementById('setup-waiting-msg').classList.remove('hidden');
+                        document.getElementById('setup-waiting-msg').innerText = "Syncing match data...";
+                        document.getElementById('start-btn').classList.add('hidden');
+                    } else {
+                        myPlayerNum = 2; isSpectator = false;
+                        enterOnlineSetup();
+                    }
+                }, 200); 
             }
         };
 
@@ -823,6 +859,9 @@
 
         window.setMode = (m) => {
             config.mode = m;
+            document.getElementById('btn-m1p').className = `flex-1 py-1.5 rounded border border-white/10 text-[10px] font-bold ${m==='1p'?'bg-cyan-600':'bg-white/5'}`;
+            document.getElementById('btn-m2p').className = `flex-1 py-1.5 rounded border border-white/10 text-[10px] font-bold ${m==='2p'?'bg-cyan-600':'bg-white/5'}`;
+            document.getElementById('level-setting').style.display = m === '1p' ? 'block' : 'none';
             window.resetSetupUI();
         };
 
@@ -834,7 +873,10 @@
         
         window.resetSetupUI = () => { 
             setupState.p1Secret = Array(config.digits).fill(null); setupState.p2Secret = Array(config.digits).fill(null); 
-            activeIdx = 0; document.getElementById('start-btn').classList.remove('hidden'); document.getElementById('online-waiting-info').classList.add('hidden');
+            activeIdx = 0; 
+            document.getElementById('start-btn').classList.remove('hidden'); 
+            document.getElementById('online-waiting-info').classList.add('hidden');
+            document.getElementById('setup-waiting-msg').classList.add('hidden');
             window.renderSetupSlots(); window.renderSetupKeypad(); window.updateSetupUI(); 
         };
 
