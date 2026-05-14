@@ -1004,7 +1004,9 @@
                 if (config.mode === '2p') {
                     mySecretArea.innerText = "?".repeat(config.digits); codeLabel.innerText = "LOCAL CODE HIDDEN";
                 } else {
-                    mySecretArea.innerText = p1Secret.join('');
+                    // オンラインのゲスト(2P)ならp2Secret、それ以外(ホストorCPU戦)はp1Secretを表示
+                    const mySecret = (config.mode === 'online' && myPlayerNum === 2) ? p2Secret : p1Secret;
+                    mySecretArea.innerText = mySecret.join('');
                     codeLabel.innerText = "YOUR SECRET CODE";
                 }
             }
