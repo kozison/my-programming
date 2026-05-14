@@ -880,9 +880,23 @@
         };
 
         window.updateSetupUI = () => { 
-            const btn = document.getElementById('start-btn'); btn.innerText = config.mode === 'online' ? "READY" : (setupState.phase === 'p1' ? "NEXT" : "START");
-            const label = document.getElementById('setup-label'); label.innerText = setupState.phase === 'p1' ? "1P CODE" : "2P CODE";
-            label.style.color = setupState.phase === 'p1' ? "var(--neon-blue)" : "var(--neon-pink)";
+            const btn = document.getElementById('start-btn');
+            const label = document.getElementById('setup-label');
+
+            if (config.mode === 'online') {
+                btn.innerText = "READY";
+                label.innerText = "YOU CODE";
+                label.style.color = "var(--neon-blue)";
+            } else if (config.mode === '1p') {
+                // CPU戦の時は常にスタートボタン
+                btn.innerText = "START";
+                label.innerText = "YOU CODE";
+                label.style.color = "var(--neon-blue)";
+            } else { // config.mode === '2p'
+                btn.innerText = (setupState.phase === 'p1' ? "NEXT" : "START");
+                label.innerText = (setupState.phase === 'p1' ? "1P CODE" : "2P CODE");
+                label.style.color = (setupState.phase === 'p1' ? "var(--neon-blue)" : "var(--neon-pink)");
+            }
             window.checkReady(); 
         }
 
